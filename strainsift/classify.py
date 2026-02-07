@@ -203,6 +203,35 @@ class ReadClassifier:
         return self.classify_reads(reads)
 
 
+def _auto_scale(references: list[StrainReference], read_length: int = 150) -> float:
+    """Choose a FracMinHash scale that works for the given genome sizes.
+
+    For large genomes (>1Mb), scale=1/1000 is appropriate.
+    For smaller genomes (simulated data), we need a higher scale so that
+    short reads produce at least a few sketch hashes.
+
+    Target: a read of `read_length` with k=21 should produce >=5 hashes.
+    A read has (read_length - k + 1) k-mers. We want:
+        scale * n_kmers >= 5  =>  scale >= 5 / n_kmers
+    """
+    n_kmers = max(read_length - 21 + 1, 1)
+    min_scale = 5.0 / n_kmers  # ~0.038 for 150bp reads
+
+    if not references:
+        return min_scale
+
+    avg_genome = sum(r.genome_length for r in references) / len(references)
+
+    # For real genomes (>1Mb), use standard 1/1000
+    if avg_genome >= 1_000_000:
+        return max(1 / 1000, min_scale)
+
+    # For smaller genomes, scale up proportionally
+    # At 50kb, use ~1/50; at 500kb, use ~1/500
+    genome_scale = 1.0 / max(avg_genome / 50, 1)
+    return max(genome_scale, min_scale)
+
+
 def classify_reads_batch(
     reads: list[FastqRecord],
     references: list[StrainReference],
@@ -213,6 +242,9 @@ def classify_reads_batch(
     Useful for small datasets and testing. For large datasets, build the
     index once and reuse it across samples.
 
+    Automatically selects an appropriate FracMinHash scale if the config
+    uses the default scale and the genomes are small (e.g., simulated data).
+
     Args:
         reads: List of reads to classify.
         references: List of strain references for the database.
@@ -222,10 +254,20 @@ def classify_reads_batch(
         Tuple of (classifications, stats).
     """
     config = config or ClassificationConfig()
+
+    # Auto-tune scale for small genomes
+    scale = config.scale
+    if references and config.scale == 1 / 1000:
+        avg_genome = sum(r.genome_length for r in references) / len(references)
+        if avg_genome < 1_000_000:
+            scale = _auto_scale(references)
+            logger.info("Auto-tuned FracMinHash scale to %.4f for %d bp genomes",
+                        scale, int(avg_genome))
+
     index = StrainSiftIndex(
         coarse_k=config.coarse_k,
         fine_k=config.fine_k,
-        scale=config.scale,
+        scale=scale,
     )
     index.build_from_references(references)
     classifier = ReadClassifier(index, config)

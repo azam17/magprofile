@@ -204,6 +204,20 @@ class JointEM:
         phi = best_phi
         gamma = best_gamma
 
+        # Normalize phi per strain for interpretable gene presence output.
+        # During EM, phi represents a read-fraction rate (~ gene_length /
+        # genome_length per present gene). Rescaling by the median of
+        # positive values converts the rate into a gene presence indicator
+        # that thresholds correctly at 0.5. Median is more robust than max
+        # to uneven gene coverage.
+        for k in range(K):
+            positive = phi[k][phi[k] > 1e-4]
+            if len(positive) > 0:
+                norm_val = np.median(positive)
+                if norm_val > 1e-6:
+                    phi[k] = phi[k] / norm_val
+        phi = np.clip(phi, 1e-6, 1.0 - 1e-6)
+
         # Convergence diagnostics
         multimodal = False
         if len(restart_lls) >= 2:
@@ -454,9 +468,12 @@ class JointEM:
         # Update phi (MAP Beta)
         if not cfg.fix_phi:
             # Accumulate: for each strain k and gene g, sum gamma for reads
-            # that map to gene g in strain k
-            gene_gamma = np.zeros((K, G))  # numerator accumulator
-            strain_gamma = gamma[:, :K].sum(axis=0)  # total gamma per strain
+            # that map to gene g in strain k.
+            # CRITICAL: the denominator uses only gamma from reads that hit
+            # ANY gene for the strain (genic reads), not intergenic reads.
+            # Otherwise intergenic reads massively dilute phi toward 0.
+            gene_gamma = np.zeros((K, G))  # numerator: gamma for gene g
+            strain_gamma_genic = np.zeros(K)  # denominator: gamma from genic reads
 
             for r, rd in enumerate(read_data):
                 for idx in range(len(rd.strain_indices)):
@@ -464,10 +481,11 @@ class JointEM:
                     g = rd.gene_indices[idx]
                     if k < K and 0 <= g < G:
                         gene_gamma[k, g] += gamma[r, k]
+                        strain_gamma_genic[k] += gamma[r, k]
 
             # MAP Beta update
             numerator = gene_gamma + prior_a - 1.0
-            denominator = strain_gamma[:, np.newaxis] + prior_a + prior_b - 2.0
+            denominator = strain_gamma_genic[:, np.newaxis] + prior_a + prior_b - 2.0
 
             # Clip to avoid division by zero and ensure valid probabilities
             numerator = np.maximum(numerator, 1e-10)
