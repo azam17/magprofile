@@ -21,11 +21,20 @@
 #include "refdb.h"
 #include "index.h"
 #include "kmer.h"
+#include "update.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <stdlib.h>
+#include <math.h>
+
+#ifdef _WIN32
+  #include <direct.h>
+  #define HS_MKDIR(p) _mkdir(p)
+#else
+  #define HS_MKDIR(p) mkdir(p, 0755)
+#endif
 
 /* ================================================================== */
 /* Constants                                                           */
@@ -58,6 +67,13 @@ typedef struct {
     int  wizard_step;         /* 0=welcome, 1=index, 2=formats, 3=ready */
     int  index_found;         /* auto-detected on launch */
     volatile int wizard_building; /* 1 = index build in progress */
+    Uint32 wizard_start_ticks;    /* SDL ticks when wizard opened (animation) */
+    /* Database auto-update */
+    hs_update_ctx_t  update_ctx;
+    volatile int     update_checking;     /* 1 = check thread running   */
+    volatile int     update_available;    /* 1 = newer version exists   */
+    volatile int     update_in_progress;  /* 1 = download thread running*/
+    int              update_dismissed;    /* 1 = user dismissed banner  */
 } gui_state_t;
 
 /* ================================================================== */
@@ -182,6 +198,7 @@ static void open_file_dialog(gui_state_t *st) {
 /* ================================================================== */
 static void find_default_index(char *path, size_t sz) {
 #ifdef __APPLE__
+    /* macOS: look inside .app bundle first */
     {
         char buf[1024];
         const char *base = SDL_GetBasePath();
@@ -192,6 +209,7 @@ static void find_default_index(char *path, size_t sz) {
         }
     }
 #endif
+    /* Same directory as executable */
     {
         const char *base = SDL_GetBasePath();
         if (base) {
@@ -199,8 +217,13 @@ static void find_default_index(char *path, size_t sz) {
             snprintf(buf, sizeof(buf), "%sdefault.idx", base);
             FILE *f = fopen(buf, "rb");
             if (f) { fclose(f); snprintf(path, sz, "%s", buf); return; }
+            /* Also check for halal.idx next to exe */
+            snprintf(buf, sizeof(buf), "%shalal.idx", base);
+            f = fopen(buf, "rb");
+            if (f) { fclose(f); snprintf(path, sz, "%s", buf); return; }
         }
     }
+    /* Current working directory */
     {
         FILE *f = fopen("halal.idx", "rb");
         if (f) { fclose(f); snprintf(path, sz, "halal.idx"); return; }
@@ -523,26 +546,26 @@ static void draw_database_panel(struct nk_context *ctx,
 /* First-launch wizard                                                 */
 /* ================================================================== */
 
-/* Check if ~/.halalseq/setup_done exists */
+/* hs_config_dir() is now provided by src/update.c via update.h */
+
+/* Check if setup_done marker exists */
 static int wizard_setup_done_exists(void) {
-    const char *home = getenv("HOME");
-    if (!home) return 0;
+    char dir[1024];
+    if (!hs_config_dir(dir, sizeof(dir))) return 0;
     char path[1024];
-    snprintf(path, sizeof(path), "%s/.halalseq/setup_done", home);
+    snprintf(path, sizeof(path), "%s%csetup_done", dir, '/');
     FILE *f = fopen(path, "r");
     if (f) { fclose(f); return 1; }
     return 0;
 }
 
-/* Create ~/.halalseq/setup_done marker */
+/* Create setup_done marker */
 static void wizard_write_setup_done(void) {
-    const char *home = getenv("HOME");
-    if (!home) return;
     char dir[1024];
-    snprintf(dir, sizeof(dir), "%s/.halalseq", home);
-    mkdir(dir, 0755);
+    if (!hs_config_dir(dir, sizeof(dir))) return;
+    HS_MKDIR(dir);
     char path[1024];
-    snprintf(path, sizeof(path), "%s/.halalseq/setup_done", home);
+    snprintf(path, sizeof(path), "%s%csetup_done", dir, '/');
     FILE *f = fopen(path, "w");
     if (f) { fprintf(f, "1\n"); fclose(f); }
 }
@@ -554,6 +577,23 @@ static int wizard_build_worker(void *data) {
     /* Build refdb then index via system() calls to halalseq CLI */
     const char *base = SDL_GetBasePath();
     char cmd[2048];
+#ifdef _WIN32
+    const char *tmp = getenv("TEMP");
+    if (!tmp) tmp = "C:\\Temp";
+    if (base && base[0]) {
+        snprintf(cmd, sizeof(cmd),
+                 "\"%shalalseq.exe\" build-db -o \"%s\\_hs_wizard.db\" && "
+                 "\"%shalalseq.exe\" index -d \"%s\\_hs_wizard.db\" -o halal.idx && "
+                 "del \"%s\\_hs_wizard.db\"",
+                 base, tmp, base, tmp, tmp);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+                 "halalseq.exe build-db -o \"%s\\_hs_wizard.db\" && "
+                 "halalseq.exe index -d \"%s\\_hs_wizard.db\" -o halal.idx && "
+                 "del \"%s\\_hs_wizard.db\"",
+                 tmp, tmp, tmp);
+    }
+#else
     if (base && base[0]) {
         snprintf(cmd, sizeof(cmd),
                  "%shalalseq build-db -o /tmp/_hs_wizard.db && "
@@ -566,6 +606,7 @@ static int wizard_build_worker(void *data) {
                  "./halalseq index -d /tmp/_hs_wizard.db -o halal.idx && "
                  "rm -f /tmp/_hs_wizard.db");
     }
+#endif
     int ret = system(cmd);
     if (ret == 0) {
         find_default_index(st->index_path, sizeof(st->index_path));
@@ -579,238 +620,584 @@ static int wizard_build_worker(void *data) {
     return ret;
 }
 
-/* Draw the wizard overlay */
-static void draw_wizard(struct nk_context *ctx, gui_state_t *st,
-                         int win_w, int win_h)
+/* ================================================================== */
+/* Update background workers                                           */
+/* ================================================================== */
+
+/* Background thread: check for updates (fetch manifest, compare ver) */
+static int update_check_worker(void *data) {
+    gui_state_t *st = (gui_state_t *)data;
+    hs_update_ctx_t *uc = &st->update_ctx;
+
+    /* Ensure index_path is set in update context */
+    if (!uc->index_path[0] && st->index_path[0])
+        snprintf(uc->index_path, sizeof(uc->index_path), "%s", st->index_path);
+
+    hs_update_run(uc);
+
+    if (uc->status == HS_UPDATE_AVAILABLE)
+        st->update_available = 1;
+
+    st->update_checking = 0;
+    return 0;
+}
+
+/* Background thread: download, verify, install the update */
+static int update_download_worker(void *data) {
+    gui_state_t *st = (gui_state_t *)data;
+    hs_update_ctx_t *uc = &st->update_ctx;
+
+    hs_update_run_download(uc);
+
+    if (uc->status == HS_UPDATE_DONE) {
+        /* Reload database info from the newly installed index */
+        if (st->db_info) refdb_destroy(st->db_info);
+        st->db_info = load_db_info(st->index_path);
+        st->update_available = 0;
+    }
+
+    st->update_in_progress = 0;
+    return 0;
+}
+
+/* Draw custom step progress bar with circles and connecting lines */
+static void draw_step_progress(struct nk_context *ctx, int current_step)
 {
-    /* Centered panel ~500x420 */
-    float pw = 500, ph = 420;
-    if (pw > win_w - 40) pw = (float)win_w - 40;
-    if (ph > win_h - 40) ph = (float)win_h - 40;
-    float px = ((float)win_w - pw) * 0.5f;
-    float py = ((float)win_h - ph) * 0.5f;
+    static const char *step_labels[] = {
+        "Welcome", "Index", "Formats", "Ready"
+    };
+    nk_layout_row_dynamic(ctx, 50, 1);
+    struct nk_rect bounds;
+    nk_widget(&bounds, ctx);
+    struct nk_command_buffer *canvas = nk_window_get_canvas(ctx);
 
-    if (!nk_begin(ctx, "Setup Wizard",
-                  nk_rect(px, py, pw, ph),
-                  NK_WINDOW_BORDER | NK_WINDOW_TITLE |
-                  NK_WINDOW_NO_SCROLLBAR)) {
-        nk_end(ctx);
-        return;
+    const struct nk_user_font *font = ctx->style.font;
+    float total_w = bounds.w - 100.0f;
+    float x_start = bounds.x + 50.0f;
+    float y_center = bounds.y + 14.0f;
+    float spacing = total_w / 3.0f;
+    float radius = 12.0f;
+
+    /* Draw connecting lines first (behind circles) */
+    for (int i = 0; i < 3; i++) {
+        float x1 = x_start + (float)i * spacing + radius + 2;
+        float x2 = x_start + (float)(i + 1) * spacing - radius - 2;
+        struct nk_color line_col = (i < current_step)
+            ? nk_rgb(34, 139, 34) : nk_rgb(70, 70, 75);
+        nk_stroke_line(canvas, x1, y_center, x2, y_center, 2.0f, line_col);
     }
 
-    /* Step indicator — ASCII-safe, e.g. "Step 1 of 4  [*] [ ] [ ] [ ]" */
-    nk_layout_row_dynamic(ctx, 20, 1);
-    {
-        char dot_str[64] = "";
-        char tmp[16];
-        snprintf(tmp, sizeof(tmp), "Step %d/4  ", st->wizard_step + 1);
-        strcat(dot_str, tmp);
-        for (int i = 0; i < 4; i++) {
-            strcat(dot_str, i == st->wizard_step ? "[*] " : "[ ] ");
+    /* Draw circles and labels */
+    for (int i = 0; i < 4; i++) {
+        float cx = x_start + (float)i * spacing;
+        struct nk_color fill, border_c, text_c;
+
+        if (i < current_step) {
+            /* Completed: solid green */
+            fill = nk_rgb(34, 139, 34);
+            border_c = nk_rgb(40, 160, 40);
+            text_c = nk_rgb(255, 255, 255);
+        } else if (i == current_step) {
+            /* Current: green outline, dark fill */
+            fill = nk_rgb(25, 60, 25);
+            border_c = nk_rgb(34, 139, 34);
+            text_c = nk_rgb(34, 139, 34);
+        } else {
+            /* Future: dim */
+            fill = nk_rgb(50, 50, 55);
+            border_c = nk_rgb(70, 70, 75);
+            text_c = nk_rgb(100, 100, 100);
         }
-        nk_label(ctx, dot_str, NK_TEXT_CENTERED);
+
+        /* Filled circle */
+        nk_fill_circle(canvas,
+            nk_rect(cx - radius, y_center - radius,
+                    radius * 2, radius * 2),
+            fill);
+        nk_stroke_circle(canvas,
+            nk_rect(cx - radius, y_center - radius,
+                    radius * 2, radius * 2),
+            2.0f, border_c);
+
+        /* Step number inside circle — manually centered */
+        char num[4];
+        if (i < current_step)
+            snprintf(num, sizeof(num), "ok");
+        else
+            snprintf(num, sizeof(num), "%d", i + 1);
+        int num_len = (int)strlen(num);
+        float text_w = font->width(font->userdata, font->height,
+                                    num, num_len);
+        float text_h = font->height;
+        float tx = cx - text_w * 0.5f;
+        float ty = y_center - text_h * 0.5f;
+        nk_draw_text(canvas, nk_rect(tx, ty, text_w + 4, text_h + 2),
+                     num, num_len,
+                     font, nk_rgba(0,0,0,0), text_c);
+
+        /* Label below — centered under circle */
+        int lbl_len = (int)strlen(step_labels[i]);
+        float lbl_w = font->width(font->userdata, font->height,
+                                   step_labels[i], lbl_len);
+        float lbl_x = cx - lbl_w * 0.5f;
+        float lbl_y = y_center + radius + 4;
+        struct nk_color lbl_c = (i <= current_step)
+            ? nk_rgb(200, 200, 200) : nk_rgb(100, 100, 100);
+        nk_draw_text(canvas,
+                     nk_rect(lbl_x, lbl_y, lbl_w + 4, 16),
+                     step_labels[i], lbl_len,
+                     font, nk_rgba(0,0,0,0), lbl_c);
+    }
+}
+
+/* Draw an animated loading bar */
+static void draw_loading_bar(struct nk_context *ctx, Uint32 start_ticks)
+{
+    nk_layout_row_dynamic(ctx, 16, 1);
+    struct nk_rect bounds;
+    nk_widget(&bounds, ctx);
+    struct nk_command_buffer *canvas = nk_window_get_canvas(ctx);
+
+    /* Track background */
+    nk_fill_rect(canvas, bounds, 4, nk_rgb(50, 50, 55));
+
+    /* Animated sweeping bar */
+    Uint32 elapsed = SDL_GetTicks() - start_ticks;
+    float cycle = (float)(elapsed % 2000) / 2000.0f;  /* 0..1 over 2 sec */
+    /* Ease in/out with sine */
+    float pos = (1.0f - cosf(cycle * 3.14159f * 2.0f)) * 0.5f;
+    float bar_w = bounds.w * 0.35f;
+    float bar_x = bounds.x + pos * (bounds.w - bar_w);
+
+    /* Clamp to track bounds */
+    if (bar_x < bounds.x) bar_x = bounds.x;
+    if (bar_x + bar_w > bounds.x + bounds.w)
+        bar_w = bounds.x + bounds.w - bar_x;
+
+    nk_fill_rect(canvas,
+                  nk_rect(bar_x, bounds.y, bar_w, bounds.h),
+                  4, nk_rgb(34, 139, 34));
+}
+
+/* Draw the wizard content inside a group within the main window.
+   Caller must already have nk_begin'd the main window. */
+static void draw_wizard_content(struct nk_context *ctx, gui_state_t *st,
+                                 float pw)
+{
+    /* Ensure animation timer is set */
+    if (st->wizard_start_ticks == 0)
+        st->wizard_start_ticks = SDL_GetTicks();
+
+    /* Top padding */
+    nk_layout_row_dynamic(ctx, 10, 1);
+    nk_spacing(ctx, 1);
+
+    /* Step progress bar */
+    draw_step_progress(ctx, st->wizard_step);
+
+    /* Space below progress dots+labels */
+    nk_layout_row_dynamic(ctx, 20, 1);
+    nk_spacing(ctx, 1);
+
+    /* Separator line */
+    nk_layout_row_dynamic(ctx, 2, 1);
+    {
+        struct nk_rect sep;
+        nk_widget(&sep, ctx);
+        struct nk_command_buffer *c = nk_window_get_canvas(ctx);
+        nk_fill_rect(c, nk_rect(sep.x + 20, sep.y, sep.w - 40, 1),
+                      0, nk_rgb(60, 60, 65));
     }
 
-    nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+    nk_layout_row_dynamic(ctx, 12, 1);
     nk_spacing(ctx, 1);
 
     /* Content area per step */
     switch (st->wizard_step) {
     case 0: /* Welcome */
-        nk_layout_row_dynamic(ctx, 36, 1);
+        nk_layout_row_dynamic(ctx, 40, 1);
         nk_label(ctx, "Welcome to HalalSeq", NK_TEXT_CENTERED);
 
-        nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+        nk_layout_row_dynamic(ctx, 8, 1);
         nk_spacing(ctx, 1);
 
-        nk_layout_row_dynamic(ctx, 60, 1);
+        nk_layout_row_dynamic(ctx, 50, 1);
         nk_label_wrap(ctx,
             "Halal food authentication via DNA metabarcoding. "
             "This wizard will check that everything is set up "
             "for accurate analysis.");
 
-        nk_layout_row_dynamic(ctx, 44, 1);
+        nk_layout_row_dynamic(ctx, 12, 1);
+        nk_spacing(ctx, 1);
+
+        nk_layout_row_dynamic(ctx, 50, 1);
         nk_label_wrap(ctx,
             "HalalSeq identifies animal species in food samples "
-            "using mitochondrial DNA markers.");
+            "using mitochondrial DNA markers and statistical "
+            "estimation.");
+
+        nk_layout_row_dynamic(ctx, 12, 1);
+        nk_spacing(ctx, 1);
+
+        nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+        nk_label_colored(ctx, "Click Next to get started.",
+                         NK_TEXT_CENTERED, nk_rgb(140, 140, 140));
         break;
 
     case 1: /* Reference Index */
-        nk_layout_row_dynamic(ctx, 36, 1);
+        nk_layout_row_dynamic(ctx, 34, 1);
         nk_label(ctx, "Reference Index", NK_TEXT_CENTERED);
 
-        nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+        nk_layout_row_dynamic(ctx, 8, 1);
         nk_spacing(ctx, 1);
 
         if (st->wizard_building) {
             nk_layout_row_dynamic(ctx, ROW_LABEL, 1);
-            nk_label_colored(ctx, "Building reference index...",
-                             NK_TEXT_LEFT, nk_rgb(218, 165, 32));
-            nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
-            nk_size bpv = 50;
-            nk_progress(ctx, &bpv, 100, NK_FIXED);
-        } else if (st->index_found) {
-            nk_layout_row_dynamic(ctx, ROW_LABEL, 1);
-            nk_label_colored(ctx, "Index found",
-                             NK_TEXT_LEFT, nk_rgb(34, 139, 34));
+            nk_label_colored(ctx, "Building reference database...",
+                             NK_TEXT_CENTERED, nk_rgb(218, 165, 32));
+
+            nk_layout_row_dynamic(ctx, 8, 1);
+            nk_spacing(ctx, 1);
+
+            draw_loading_bar(ctx, st->wizard_start_ticks);
+
+            nk_layout_row_dynamic(ctx, 12, 1);
+            nk_spacing(ctx, 1);
 
             nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
-            nk_label(ctx, st->index_path, NK_TEXT_LEFT);
+            nk_label_colored(ctx, "This may take a moment...",
+                             NK_TEXT_CENTERED, nk_rgb(120, 120, 120));
+
+        } else if (st->index_found) {
+            /* Green status box */
+            nk_layout_row_dynamic(ctx, 28, 1);
+            {
+                struct nk_rect bx;
+                nk_widget(&bx, ctx);
+                struct nk_command_buffer *c = nk_window_get_canvas(ctx);
+                nk_fill_rect(c, bx, 6, nk_rgba(34, 139, 34, 30));
+                nk_stroke_rect(c, bx, 6, 1.0f, nk_rgba(34, 139, 34, 80));
+                nk_draw_text(c, nk_rect(bx.x + 10, bx.y, bx.w - 20, bx.h),
+                    "Index found", 11,
+                    ctx->style.font, nk_rgba(0,0,0,0),
+                    nk_rgb(34, 200, 34));
+            }
+
+            nk_layout_row_dynamic(ctx, 8, 1);
+            nk_spacing(ctx, 1);
+
+            nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+            {
+                char path_label[256];
+                snprintf(path_label, sizeof(path_label),
+                         "Path: %s", st->index_path);
+                nk_label_colored(ctx, path_label, NK_TEXT_LEFT,
+                                 nk_rgb(160, 160, 160));
+            }
 
             if (st->db_info) {
                 nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
                 char info[128];
                 snprintf(info, sizeof(info),
-                         "%d species, %d markers",
+                         "Contains %d species across %d markers",
                          st->db_info->n_species,
                          st->db_info->n_markers);
-                nk_label(ctx, info, NK_TEXT_LEFT);
+                nk_label_colored(ctx, info, NK_TEXT_LEFT,
+                                 nk_rgb(160, 160, 160));
+            }
+
+            /* --- Check for Updates button (wizard step 1) --- */
+            nk_layout_row_dynamic(ctx, 8, 1);
+            nk_spacing(ctx, 1);
+
+            if (st->update_checking) {
+                nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+                nk_label_colored(ctx, "Checking for updates...",
+                                 NK_TEXT_LEFT, nk_rgb(100, 180, 255));
+                draw_loading_bar(ctx, st->wizard_start_ticks);
+            } else if (st->update_available) {
+                nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+                char upd_info[128];
+                snprintf(upd_info, sizeof(upd_info),
+                         "Update available: v%u -> v%u",
+                         st->update_ctx.local_version,
+                         st->update_ctx.manifest.version);
+                nk_label_colored(ctx, upd_info, NK_TEXT_LEFT,
+                                 nk_rgb(100, 180, 255));
+                if (st->update_in_progress) {
+                    nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+                    int us = st->update_ctx.status;
+                    const char *msg = (us == HS_UPDATE_DOWNLOADING) ? "Downloading..." :
+                                      (us == HS_UPDATE_VERIFYING)   ? "Verifying..." :
+                                      (us == HS_UPDATE_INSTALLING)  ? "Installing..." :
+                                      (us == HS_UPDATE_DONE)        ? "Update complete!" :
+                                      (us == HS_UPDATE_ERROR)       ? st->update_ctx.error_msg :
+                                      "Updating...";
+                    struct nk_color mc = (us == HS_UPDATE_DONE)  ? nk_rgb(34, 200, 34) :
+                                         (us == HS_UPDATE_ERROR) ? nk_rgb(220, 100, 100) :
+                                         nk_rgb(218, 165, 32);
+                    nk_label_colored(ctx, msg, NK_TEXT_LEFT, mc);
+                    draw_loading_bar(ctx, st->wizard_start_ticks);
+                } else {
+                    nk_layout_row_dynamic(ctx, ROW_BTN, 1);
+                    struct nk_style_button upd = ctx->style.button;
+                    upd.normal = nk_style_item_color(nk_rgb(30, 100, 180));
+                    upd.hover  = nk_style_item_color(nk_rgb(40, 120, 210));
+                    upd.active = nk_style_item_color(nk_rgb(20, 80, 150));
+                    upd.text_normal = nk_rgb(255, 255, 255);
+                    upd.text_hover  = nk_rgb(255, 255, 255);
+                    upd.text_active = nk_rgb(255, 255, 255);
+                    upd.rounding = 6;
+                    if (nk_button_label_styled(ctx, &upd, "Update Now")) {
+                        st->update_in_progress = 1;
+                        st->wizard_start_ticks = SDL_GetTicks();
+                        SDL_DetachThread(
+                            SDL_CreateThread(update_download_worker, "update_dl", st));
+                    }
+                }
+            } else if (st->update_ctx.status == HS_UPDATE_ERROR) {
+                nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+                nk_label_colored(ctx, "Update check failed (offline?)",
+                                 NK_TEXT_LEFT, nk_rgb(120, 120, 120));
+            } else {
+                nk_layout_row_dynamic(ctx, ROW_BTN, 1);
+                if (nk_button_label(ctx, "Check for Updates")) {
+                    st->update_checking = 1;
+                    st->wizard_start_ticks = SDL_GetTicks();
+                    SDL_DetachThread(
+                        SDL_CreateThread(update_check_worker, "update_chk", st));
+                }
             }
         } else {
-            nk_layout_row_dynamic(ctx, ROW_LABEL, 1);
-            nk_label_colored(ctx,
-                "No reference index found!",
-                NK_TEXT_LEFT, nk_rgb(220, 20, 60));
+            /* Red status box */
+            nk_layout_row_dynamic(ctx, 28, 1);
+            {
+                struct nk_rect bx;
+                nk_widget(&bx, ctx);
+                struct nk_command_buffer *c = nk_window_get_canvas(ctx);
+                nk_fill_rect(c, bx, 6, nk_rgba(220, 20, 60, 25));
+                nk_stroke_rect(c, bx, 6, 1.0f, nk_rgba(220, 20, 60, 80));
+                const char *msg = "No reference index found";
+                nk_draw_text(c, nk_rect(bx.x + 10, bx.y, bx.w - 20, bx.h),
+                    msg, (int)strlen(msg),
+                    ctx->style.font, nk_rgba(0,0,0,0),
+                    nk_rgb(220, 100, 100));
+            }
 
-            nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+            nk_layout_row_dynamic(ctx, 8, 1);
+            nk_spacing(ctx, 1);
+
+            nk_layout_row_dynamic(ctx, 44, 1);
             nk_label_wrap(ctx,
-                "An index is required for species identification. "
+                "A reference index is required for species identification. "
                 "Click below to build one from built-in references.");
 
-            nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+            nk_layout_row_dynamic(ctx, 8, 1);
             nk_spacing(ctx, 1);
 
             nk_layout_row_dynamic(ctx, ROW_BTN, 1);
-            if (nk_button_label(ctx, "Build Index")) {
-                st->wizard_building = 1;
-                SDL_CreateThread(wizard_build_worker, "wizard_build", st);
+            {
+                struct nk_style_button build = ctx->style.button;
+                build.normal = nk_style_item_color(nk_rgb(34, 100, 34));
+                build.hover  = nk_style_item_color(nk_rgb(34, 139, 34));
+                build.active = nk_style_item_color(nk_rgb(20, 80, 20));
+                build.text_normal = nk_rgb(255, 255, 255);
+                build.text_hover  = nk_rgb(255, 255, 255);
+                build.text_active = nk_rgb(255, 255, 255);
+                build.rounding = 6;
+                if (nk_button_label_styled(ctx, &build, "Build Index")) {
+                    st->wizard_building = 1;
+                    st->wizard_start_ticks = SDL_GetTicks();
+                    SDL_CreateThread(wizard_build_worker, "wizard_build", st);
+                }
             }
         }
         break;
 
     case 2: /* Supported Formats */
-        nk_layout_row_dynamic(ctx, 36, 1);
+        nk_layout_row_dynamic(ctx, 34, 1);
         nk_label(ctx, "Supported Formats", NK_TEXT_CENTERED);
 
-        nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+        nk_layout_row_dynamic(ctx, 8, 1);
         nk_spacing(ctx, 1);
 
-        nk_layout_row_dynamic(ctx, ROW_LABEL, 1);
-        nk_label(ctx, "Supported file types:", NK_TEXT_LEFT);
+        /* Format chips in a styled box */
+        nk_layout_row_dynamic(ctx, 56, 1);
+        {
+            struct nk_rect bx;
+            nk_widget(&bx, ctx);
+            struct nk_command_buffer *c = nk_window_get_canvas(ctx);
+            nk_fill_rect(c, bx, 6, nk_rgba(255, 255, 255, 8));
 
-        nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
-        nk_label(ctx, "  .fq  .fastq  .fq.gz  .fastq.gz", NK_TEXT_LEFT);
-        nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
-        nk_label(ctx, "  .fa  .fasta  .fa.gz  .fasta.gz", NK_TEXT_LEFT);
+            const char *line1 = "  FASTQ:  .fq   .fastq   .fq.gz   .fastq.gz";
+            const char *line2 = "  FASTA:  .fa   .fasta   .fa.gz   .fasta.gz";
+            nk_draw_text(c,
+                nk_rect(bx.x + 8, bx.y + 4, bx.w - 16, 22),
+                line1, (int)strlen(line1),
+                ctx->style.font, nk_rgba(0,0,0,0),
+                nk_rgb(180, 220, 180));
+            nk_draw_text(c,
+                nk_rect(bx.x + 8, bx.y + 28, bx.w - 16, 22),
+                line2, (int)strlen(line2),
+                ctx->style.font, nk_rgba(0,0,0,0),
+                nk_rgb(180, 220, 180));
+        }
 
-        nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+        nk_layout_row_dynamic(ctx, 12, 1);
         nk_spacing(ctx, 1);
 
-        nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+        nk_layout_row_dynamic(ctx, 40, 1);
         nk_label_wrap(ctx,
-            "HalalSeq works with raw sequencing data - "
-            "no preprocessing required.");
+            "No preprocessing required - HalalSeq works directly "
+            "with raw sequencing data.");
 
-        nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+        nk_layout_row_dynamic(ctx, 40, 1);
         nk_label_wrap(ctx,
             "For best results, use amplicon-targeted sequencing "
             "(PCR + Illumina).");
 
-        nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+        nk_layout_row_dynamic(ctx, 40, 1);
         nk_label_wrap(ctx,
             "R1/R2 paired-end files are automatically detected "
-            "and merged.");
+            "and merged into a single sample.");
         break;
 
     case 3: /* Ready */
-        nk_layout_row_dynamic(ctx, 36, 1);
-        nk_label(ctx, "Setup Complete", NK_TEXT_CENTERED);
+        nk_layout_row_dynamic(ctx, 34, 1);
+        nk_label(ctx, "All Set!", NK_TEXT_CENTERED);
 
-        nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+        nk_layout_row_dynamic(ctx, 12, 1);
         nk_spacing(ctx, 1);
 
+        /* Green success box */
         nk_layout_row_dynamic(ctx, 60, 1);
-        nk_label_wrap(ctx,
-            "Everything is ready! Click Start to begin using "
-            "HalalSeq for halal food authentication.");
+        {
+            struct nk_rect bx;
+            nk_widget(&bx, ctx);
+            struct nk_command_buffer *c = nk_window_get_canvas(ctx);
+            nk_fill_rect(c, bx, 8, nk_rgba(34, 139, 34, 25));
+            nk_stroke_rect(c, bx, 8, 1.0f, nk_rgba(34, 139, 34, 60));
+            const char *ok_msg = "Setup complete - ready to analyze samples!";
+            nk_draw_text(c,
+                nk_rect(bx.x + 12, bx.y, bx.w - 24, bx.h),
+                ok_msg, (int)strlen(ok_msg),
+                ctx->style.font, nk_rgba(0,0,0,0),
+                nk_rgb(34, 200, 34));
+        }
 
-        nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+        nk_layout_row_dynamic(ctx, 12, 1);
         nk_spacing(ctx, 1);
 
-        nk_layout_row_dynamic(ctx, ROW_LABEL, 1);
-        nk_label_colored(ctx, "You can re-run this wizard by deleting:",
-                         NK_TEXT_LEFT, nk_rgb(140, 140, 140));
+        nk_layout_row_dynamic(ctx, 50, 1);
+        nk_label_wrap(ctx,
+            "Choose DNA sample files and click Run Analysis to "
+            "check halal status of food products.");
+
+        nk_layout_row_dynamic(ctx, 20, 1);
+        nk_spacing(ctx, 1);
+
         nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
-        nk_label_colored(ctx, "  ~/.halalseq/setup_done",
-                         NK_TEXT_LEFT, nk_rgb(140, 140, 140));
+        nk_label_colored(ctx, "Tip: re-run wizard by deleting ~/.halalseq/setup_done",
+                         NK_TEXT_CENTERED, nk_rgb(100, 100, 100));
         break;
     }
 
-    /* Spacer to push nav buttons to bottom */
-    nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
-    nk_spacing(ctx, 1);
-    nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+    /* Flexible spacer — grow to push buttons to bottom.
+       Calculate remaining space: ph minus what's used so far.
+       We allocate a generous minimum to keep buttons at bottom. */
+    nk_layout_row_dynamic(ctx, 10, 1);
     nk_spacing(ctx, 1);
 
-    /* Navigation buttons */
-    nk_layout_row_dynamic(ctx, ROW_BTN, 2);
-
-    /* Back button */
-    if (st->wizard_step > 0) {
-        if (nk_button_label(ctx, "Back"))
-            st->wizard_step--;
-    } else {
-        /* Invisible placeholder */
-        struct nk_style_button invis = ctx->style.button;
-        invis.normal = nk_style_item_color(nk_rgba(0,0,0,0));
-        invis.hover  = nk_style_item_color(nk_rgba(0,0,0,0));
-        invis.active = nk_style_item_color(nk_rgba(0,0,0,0));
-        invis.border = 0;
-        invis.text_normal = nk_rgba(0,0,0,0);
-        invis.text_hover  = nk_rgba(0,0,0,0);
-        invis.text_active = nk_rgba(0,0,0,0);
-        nk_button_label_styled(ctx, &invis, "");
+    /* Separator above buttons */
+    nk_layout_row_dynamic(ctx, 2, 1);
+    {
+        struct nk_rect sep;
+        nk_widget(&sep, ctx);
+        struct nk_command_buffer *c = nk_window_get_canvas(ctx);
+        nk_fill_rect(c, nk_rect(sep.x + 20, sep.y, sep.w - 40, 1),
+                      0, nk_rgb(60, 60, 65));
     }
 
-    /* Next / Start button */
-    if (st->wizard_step < 3) {
-        /* Disable Next on step 1 if building or no index */
-        int can_next = 1;
-        if (st->wizard_step == 1 && !st->index_found)
-            can_next = 0;
-        if (st->wizard_building)
-            can_next = 0;
+    nk_layout_row_dynamic(ctx, 8, 1);
+    nk_spacing(ctx, 1);
 
-        if (can_next) {
+    /* Navigation buttons — 3 columns: [Skip] [      ] [Back  Next] */
+    {
+        float btn_widths[] = { 80, pw - 280, 80, 80 };
+        nk_layout_row(ctx, NK_STATIC, 36, 4, btn_widths);
+
+        /* Skip button (step 0 only) */
+        if (st->wizard_step == 0) {
+            struct nk_style_button skip = ctx->style.button;
+            skip.normal = nk_style_item_color(nk_rgba(0,0,0,0));
+            skip.hover  = nk_style_item_color(nk_rgba(255,255,255,10));
+            skip.active = nk_style_item_color(nk_rgba(255,255,255,5));
+            skip.border = 0;
+            skip.text_normal = nk_rgb(100, 100, 100);
+            skip.text_hover  = nk_rgb(150, 150, 150);
+            skip.text_active = nk_rgb(100, 100, 100);
+            if (nk_button_label_styled(ctx, &skip, "Skip")) {
+                st->show_wizard = 0;
+                wizard_write_setup_done();
+            }
+        } else {
+            nk_spacing(ctx, 1);
+        }
+
+        /* Center spacer */
+        nk_spacing(ctx, 1);
+
+        /* Back button */
+        if (st->wizard_step > 0 && !st->wizard_building) {
+            struct nk_style_button back = ctx->style.button;
+            back.rounding = 6;
+            if (nk_button_label_styled(ctx, &back, "Back"))
+                st->wizard_step--;
+        } else {
+            nk_spacing(ctx, 1);
+        }
+
+        /* Next / Start button */
+        if (st->wizard_step < 3) {
+            int can_next = 1;
+            if (st->wizard_step == 1 && !st->index_found) can_next = 0;
+            if (st->wizard_building) can_next = 0;
+
+            if (can_next) {
+                struct nk_style_button green = ctx->style.button;
+                green.normal  = nk_style_item_color(nk_rgb(34, 139, 34));
+                green.hover   = nk_style_item_color(nk_rgb(40, 170, 40));
+                green.active  = nk_style_item_color(nk_rgb(25, 110, 25));
+                green.text_normal = nk_rgb(255, 255, 255);
+                green.text_hover  = nk_rgb(255, 255, 255);
+                green.text_active = nk_rgb(255, 255, 255);
+                green.rounding = 6;
+                if (nk_button_label_styled(ctx, &green, "Next ->"))
+                    st->wizard_step++;
+            } else {
+                struct nk_style_button grey = ctx->style.button;
+                grey.normal = nk_style_item_color(nk_rgb(60, 60, 65));
+                grey.hover  = nk_style_item_color(nk_rgb(60, 60, 65));
+                grey.text_normal = nk_rgb(100, 100, 100);
+                grey.text_hover  = nk_rgb(100, 100, 100);
+                grey.rounding = 6;
+                nk_button_label_styled(ctx, &grey, "Next ->");
+            }
+        } else {
             struct nk_style_button green = ctx->style.button;
-            green.normal = nk_style_item_color(nk_rgb(34, 139, 34));
-            green.hover  = nk_style_item_color(nk_rgb(0, 180, 0));
+            green.normal  = nk_style_item_color(nk_rgb(34, 139, 34));
+            green.hover   = nk_style_item_color(nk_rgb(40, 170, 40));
+            green.active  = nk_style_item_color(nk_rgb(25, 110, 25));
             green.text_normal = nk_rgb(255, 255, 255);
             green.text_hover  = nk_rgb(255, 255, 255);
-            if (nk_button_label_styled(ctx, &green, "Next"))
-                st->wizard_step++;
-        } else {
-            struct nk_style_button grey = ctx->style.button;
-            grey.normal = nk_style_item_color(nk_rgb(80, 80, 80));
-            grey.hover  = nk_style_item_color(nk_rgb(80, 80, 80));
-            grey.text_normal = nk_rgb(140, 140, 140);
-            grey.text_hover  = nk_rgb(140, 140, 140);
-            nk_button_label_styled(ctx, &grey, "Next");
-        }
-    } else {
-        /* Start button on final step */
-        struct nk_style_button green = ctx->style.button;
-        green.normal = nk_style_item_color(nk_rgb(34, 139, 34));
-        green.hover  = nk_style_item_color(nk_rgb(0, 180, 0));
-        green.text_normal = nk_rgb(255, 255, 255);
-        green.text_hover  = nk_rgb(255, 255, 255);
-        if (nk_button_label_styled(ctx, &green, "Start")) {
-            st->show_wizard = 0;
-            wizard_write_setup_done();
+            green.text_active = nk_rgb(255, 255, 255);
+            green.rounding = 6;
+            if (nk_button_label_styled(ctx, &green, "Start")) {
+                st->show_wizard = 0;
+                wizard_write_setup_done();
+            }
         }
     }
-
-    nk_end(ctx);
 }
 
 /* ================================================================== */
@@ -819,17 +1206,38 @@ static void draw_wizard(struct nk_context *ctx, gui_state_t *st,
 static void draw_gui(struct nk_context *ctx, gui_state_t *st,
                      int win_w, int win_h)
 {
-    /* Show wizard instead of normal UI if active */
-    if (st->show_wizard) {
-        draw_wizard(ctx, st, win_w, win_h);
-        return;
-    }
-
     analysis_context_t *analysis = &st->analysis;
 
     if (!nk_begin(ctx, "HalalSeq",
                   nk_rect(0, 0, (float)win_w, (float)win_h),
                   NK_WINDOW_NO_SCROLLBAR | NK_WINDOW_BACKGROUND)) {
+        nk_end(ctx);
+        return;
+    }
+
+    /* Show wizard instead of normal layout */
+    if (st->show_wizard) {
+        /* Title */
+        nk_layout_row_dynamic(ctx, ROW_TITLE, 1);
+        nk_label(ctx, "HalalSeq - Setup", NK_TEXT_CENTERED);
+
+        nk_layout_row_dynamic(ctx, 2, 1);
+        nk_spacing(ctx, 1);
+
+        /* Centered wizard group */
+        float margin = ((float)win_w - 540.0f) * 0.5f;
+        if (margin < 20.0f) margin = 20.0f;
+        float grp_w = (float)win_w - margin * 2.0f;
+        float cols[] = { margin, grp_w, margin };
+        nk_layout_row(ctx, NK_STATIC,
+                       (float)(win_h - ROW_TITLE - 24), 3, cols);
+        nk_spacing(ctx, 1);  /* left margin */
+        if (nk_group_begin(ctx, "wizard_group",
+                           NK_WINDOW_BORDER | NK_WINDOW_NO_SCROLLBAR)) {
+            draw_wizard_content(ctx, st, grp_w);
+            nk_group_end(ctx);
+        }
+        nk_spacing(ctx, 1);  /* right margin */
         nk_end(ctx);
         return;
     }
@@ -849,6 +1257,69 @@ static void draw_gui(struct nk_context *ctx, gui_state_t *st,
     /* LEFT PANEL                                                      */
     /* ============================================================== */
     if (nk_group_begin(ctx, "input_panel", NK_WINDOW_BORDER)) {
+
+        /* ---- Database update notification banner ---- */
+        if (st->update_available && !st->update_dismissed &&
+            !st->update_in_progress) {
+            /* Blue info banner */
+            nk_layout_row_dynamic(ctx, 28, 1);
+            {
+                struct nk_rect bx;
+                nk_widget(&bx, ctx);
+                struct nk_command_buffer *c = nk_window_get_canvas(ctx);
+                nk_fill_rect(c, bx, 6, nk_rgba(30, 100, 180, 35));
+                nk_stroke_rect(c, bx, 6, 1.0f, nk_rgba(60, 140, 220, 80));
+                char ver_msg[128];
+                snprintf(ver_msg, sizeof(ver_msg),
+                         "Database v%u available (current: v%u)",
+                         st->update_ctx.manifest.version,
+                         st->update_ctx.local_version);
+                nk_draw_text(c,
+                    nk_rect(bx.x + 10, bx.y, bx.w - 20, bx.h),
+                    ver_msg, (int)strlen(ver_msg),
+                    ctx->style.font, nk_rgba(0,0,0,0),
+                    nk_rgb(100, 180, 255));
+            }
+            nk_layout_row_dynamic(ctx, ROW_BTN, 2);
+            {
+                struct nk_style_button upd_btn = ctx->style.button;
+                upd_btn.normal = nk_style_item_color(nk_rgb(30, 100, 180));
+                upd_btn.hover  = nk_style_item_color(nk_rgb(40, 120, 210));
+                upd_btn.active = nk_style_item_color(nk_rgb(20, 80, 150));
+                upd_btn.text_normal = nk_rgb(255, 255, 255);
+                upd_btn.text_hover  = nk_rgb(255, 255, 255);
+                upd_btn.text_active = nk_rgb(255, 255, 255);
+                upd_btn.rounding = 6;
+                if (nk_button_label_styled(ctx, &upd_btn, "Update Now")) {
+                    st->update_in_progress = 1;
+                    SDL_DetachThread(
+                        SDL_CreateThread(update_download_worker, "update_dl", st));
+                }
+            }
+            if (nk_button_label(ctx, "Dismiss"))
+                st->update_dismissed = 1;
+            nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+            nk_spacing(ctx, 1);
+        }
+        if (st->update_in_progress) {
+            nk_layout_row_dynamic(ctx, ROW_SMALL, 1);
+            const char *upd_text;
+            int us = st->update_ctx.status;
+            if (us == HS_UPDATE_DOWNLOADING)      upd_text = "Downloading...";
+            else if (us == HS_UPDATE_VERIFYING)    upd_text = "Verifying...";
+            else if (us == HS_UPDATE_INSTALLING)   upd_text = "Installing...";
+            else if (us == HS_UPDATE_DONE)         upd_text = "Update complete!";
+            else if (us == HS_UPDATE_ERROR)        upd_text = st->update_ctx.error_msg;
+            else                                   upd_text = "Updating...";
+            struct nk_color upd_col = (us == HS_UPDATE_DONE)
+                ? nk_rgb(34, 200, 34)
+                : (us == HS_UPDATE_ERROR)
+                    ? nk_rgb(220, 100, 100)
+                    : nk_rgb(100, 180, 255);
+            nk_label_colored(ctx, upd_text, NK_TEXT_LEFT, upd_col);
+            nk_layout_row_dynamic(ctx, ROW_SPACE, 1);
+            nk_spacing(ctx, 1);
+        }
 
         nk_layout_row_dynamic(ctx, ROW_LABEL, 1);
         nk_label(ctx, "DNA Sample Files:", NK_TEXT_LEFT);
@@ -1384,10 +1855,24 @@ int main(int argc, char *argv[]) {
     /* Load database info for database viewer */
     state.db_info = load_db_info(state.index_path);
 
+    /* Initialise update context */
+    hs_update_init(&state.update_ctx);
+    if (state.index_path[0])
+        snprintf(state.update_ctx.index_path,
+                 sizeof(state.update_ctx.index_path), "%s", state.index_path);
+
     /* First-launch wizard: show if no setup_done marker or no index */
     if (!wizard_setup_done_exists() || !state.index_found) {
         state.show_wizard = 1;
         state.wizard_step = 0;
+    }
+
+    /* Auto-check for database updates on startup (if index exists and
+     * not showing wizard — don't distract the first-launch flow) */
+    if (state.index_found && !state.show_wizard) {
+        state.update_checking = 1;
+        SDL_DetachThread(
+            SDL_CreateThread(update_check_worker, "update_check", &state));
     }
 
     /* --- Main loop ------------------------------------------------- */

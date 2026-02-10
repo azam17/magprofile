@@ -24,6 +24,11 @@ GUI_DIR = gui
 GUI_SRCS = $(GUI_DIR)/main_gui.c $(GUI_DIR)/gui_analysis.c $(LIB_DIR)/tinyfiledialogs.c
 GUI_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(notdir $(GUI_SRCS)))
 
+APP_BUNDLE  = HalalSeq.app
+APP_BIN     = $(APP_BUNDLE)/Contents/MacOS/HalalSeq
+APP_FW_DIR  = $(APP_BUNDLE)/Contents/Frameworks
+APP_RES_DIR = $(APP_BUNDLE)/Contents/Resources
+
 .PHONY: all clean test gui
 
 all: $(BUILD_DIR) $(TARGET)
@@ -68,11 +73,32 @@ $(BUILD_DIR)/gui_analysis.o: $(GUI_DIR)/gui_analysis.c | $(BUILD_DIR)
 $(BUILD_DIR)/tinyfiledialogs.o: $(LIB_DIR)/tinyfiledialogs.c | $(BUILD_DIR)
 	$(CC) -Wall -O2 -c $< -o $@
 
-gui: $(LIB_OBJS) $(GUI_OBJS)
-	mkdir -p HalalSeq.app/Contents/MacOS HalalSeq.app/Contents/Resources
+gui: $(TARGET) $(LIB_OBJS) $(GUI_OBJS)
+	mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_FW_DIR) $(APP_RES_DIR)
 	$(CC) $(LIB_OBJS) $(GUI_OBJS) $(LDFLAGS) $(SDL2_LIBS) \
-	    -framework Cocoa -o HalalSeq.app/Contents/MacOS/HalalSeq
-	cp $(GUI_DIR)/Info.plist HalalSeq.app/Contents/
+	    -framework Cocoa -o $(APP_BIN)
+	cp $(GUI_DIR)/Info.plist $(APP_BUNDLE)/Contents/
+	@# --- Embed SDL2 dylib for self-contained distribution ---
+	@SDL2_DYLIB=$$(otool -L $(APP_BIN) | sed -n 's/^[[:space:]]*\(.*libSDL2[^ ]*\.dylib\).*/\1/p' | head -1); \
+	if [ -n "$$SDL2_DYLIB" ] && [ -f "$$SDL2_DYLIB" ]; then \
+	    DYLIB_NAME=$$(basename "$$SDL2_DYLIB"); \
+	    echo "Embedding $$SDL2_DYLIB -> $(APP_FW_DIR)/$$DYLIB_NAME"; \
+	    cp "$$SDL2_DYLIB" "$(APP_FW_DIR)/$$DYLIB_NAME"; \
+	    chmod 755 "$(APP_FW_DIR)/$$DYLIB_NAME"; \
+	    install_name_tool -change "$$SDL2_DYLIB" \
+	        "@executable_path/../Frameworks/$$DYLIB_NAME" $(APP_BIN); \
+	    echo "Rewritten load path:"; \
+	    otool -L $(APP_BIN) | grep SDL2; \
+	else \
+	    echo "Warning: SDL2 dylib not found or not a file, skipping embed"; \
+	fi
+	@# --- Build default index ---
+	./$(TARGET) build-db -o /tmp/_hs_build.db
+	./$(TARGET) index -d /tmp/_hs_build.db -o $(APP_RES_DIR)/default.idx
+	rm -f /tmp/_hs_build.db
+	@# --- Ad-hoc codesign (after all resources are in place) ---
+	codesign --force --sign - --deep $(APP_BUNDLE) 2>/dev/null || true
+	@echo "=== $(APP_BUNDLE) ready ==="
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) HalalSeq.app
+	rm -rf $(BUILD_DIR) $(TARGET) $(APP_BUNDLE)
