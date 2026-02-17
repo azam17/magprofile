@@ -462,6 +462,7 @@ def plot_venn(
 def plot_indicator_species(
     result: IndicatorSpeciesResult,
     top_n: int = 10,
+    taxonomy: TaxonomyTable | None = None,
     output: str | Path = "indicator_species.pdf",
 ) -> None:
     """Barplot of top indicator MAGs per compartment with IndVal scores."""
@@ -482,7 +483,15 @@ def plot_indicator_species(
     if not plot_data:
         return
 
-    mag_labels = [d[0] for d in plot_data]
+    # Build labels with optional taxonomy annotation
+    mag_labels = []
+    for d in plot_data:
+        label = d[0]
+        if taxonomy:
+            rec = taxonomy.get(d[0])
+            if rec and rec.phylum:
+                label = f"{d[0]} ({rec.phylum})"
+        mag_labels.append(label)
     grp_labels = [d[1] for d in plot_data]
     scores = [d[2] for d in plot_data]
 

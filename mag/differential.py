@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import stats as sp_stats
 
-from .io import AbundanceTable, SampleMetadata
+from .io import AbundanceTable, SampleMetadata, TaxonomyTable
 
 
 @dataclass
@@ -102,6 +102,25 @@ def differential_abundance(
         q_values=qvals,
         effect_sizes=effects,
     )
+
+
+def rank_level_differential_abundance(
+    table: AbundanceTable,
+    taxonomy: TaxonomyTable,
+    metadata: SampleMetadata,
+    grouping_var: str,
+    group1: str,
+    group2: str,
+    rank: str = "phylum",
+) -> DifferentialAbundanceResult:
+    """Differential abundance at a given taxonomic rank.
+
+    Aggregates the abundance table at *rank* using taxonomy, then runs
+    the standard CLR + Welch's t-test pipeline.  The returned result has
+    taxon names (e.g. phylum names) as ``mag_ids``.
+    """
+    agg_table = taxonomy.aggregate_to_abundance_table(table, rank)
+    return differential_abundance(agg_table, metadata, grouping_var, group1, group2)
 
 
 def _bh_fdr(p_values: np.ndarray) -> np.ndarray:

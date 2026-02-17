@@ -127,6 +127,41 @@ class TaxonomyTable:
             result[taxon] += abundance.abundances[i]
         return result
 
+    def lookup_columns(
+        self,
+        mag_ids: Sequence[str],
+        ranks: Sequence[str] = ("phylum", "class", "genus"),
+    ) -> list[dict[str, str]]:
+        """Return taxonomy columns for a list of MAG IDs.
+
+        Each entry is a dict mapping rank name -> taxon string.
+        Missing MAGs get empty strings for all ranks.
+        """
+        rows: list[dict[str, str]] = []
+        for mag_id in mag_ids:
+            rec = self.records.get(mag_id)
+            if rec:
+                rows.append({r: rec.rank(r) for r in ranks})
+            else:
+                rows.append({r: "" for r in ranks})
+        return rows
+
+    def aggregate_to_abundance_table(
+        self, abundance: AbundanceTable, rank: str
+    ) -> AbundanceTable:
+        """Aggregate abundances at a rank and return as an AbundanceTable.
+
+        The returned table has taxon names as ``mag_ids``.
+        """
+        agg = self.aggregate_at_rank(abundance, rank)
+        taxon_names = sorted(agg.keys())
+        matrix = np.array([agg[t] for t in taxon_names])
+        return AbundanceTable(
+            mag_ids=taxon_names,
+            sample_ids=list(abundance.sample_ids),
+            abundances=matrix,
+        )
+
 
 @dataclass
 class SampleMetadata:

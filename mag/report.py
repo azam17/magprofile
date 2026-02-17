@@ -95,7 +95,11 @@ def generate_report(
                     abundance, metadata, grouping_var, g1, g2
                 )
                 diff_results.append((g1, g2, diff))
-                _write_differential(diff, g1, g2, out / f"differential_{g1}_vs_{g2}.csv")
+                _write_differential(
+                    diff, g1, g2,
+                    out / f"differential_{g1}_vs_{g2}.csv",
+                    taxonomy=taxonomy,
+                )
                 plots.plot_volcano(diff, g1, g2, output=out / f"volcano_{g1}_vs_{g2}.pdf")
             except ValueError:
                 pass
@@ -121,16 +125,44 @@ def generate_report(
     ind = ind_mod.indicator_species(
         abundance, metadata, grouping_var, n_permutations=n_permutations
     )
-    _write_indicator(ind, out / "indicator_species.csv")
-    plots.plot_indicator_species(ind, output=out / "indicator_species.pdf")
+    _write_indicator(ind, out / "indicator_species.csv", taxonomy=taxonomy)
+    plots.plot_indicator_species(
+        ind, taxonomy=taxonomy, output=out / "indicator_species.pdf",
+    )
 
     # Core microbiome
     core = cm_mod.core_microbiome(abundance, metadata, grouping_var)
-    _write_core_microbiome(core, out / "core_microbiome.csv")
+    _write_core_microbiome(core, out / "core_microbiome.csv", taxonomy=taxonomy)
 
     # Compartment specificity
     cs = cs_mod.compartment_specificity(abundance, metadata, grouping_var)
-    _write_specificity(cs, out / "compartment_specificity.csv")
+    _write_specificity(cs, out / "compartment_specificity.csv", taxonomy=taxonomy)
+
+    # Rank-level (phylum) differential abundance
+    rank_diff_results: list[tuple[str, str, diff_mod.DifferentialAbundanceResult]] = []
+    if taxonomy:
+        for i, g1 in enumerate(group_names):
+            for g2 in group_names[i + 1 :]:
+                try:
+                    rdiff = diff_mod.rank_level_differential_abundance(
+                        abundance, taxonomy, metadata, grouping_var, g1, g2,
+                        rank="phylum",
+                    )
+                    rank_diff_results.append((g1, g2, rdiff))
+                    _write_differential(
+                        rdiff, g1, g2,
+                        out / f"phylum_differential_{g1}_vs_{g2}.csv",
+                    )
+                except ValueError:
+                    pass
+
+    # Phylum composition
+    phylum_composition: dict[str, dict[str, tuple[float, float]]] | None = None
+    if taxonomy:
+        phylum_composition = _write_phylum_composition(
+            abundance, taxonomy, metadata, grouping_var,
+            out / "phylum_composition.csv",
+        )
 
     # Taxonomy plots
     if taxonomy:
@@ -169,6 +201,9 @@ def generate_report(
         "core_microbiome": core,
         "specificity": cs,
         "group_names": group_names,
+        "taxonomy": taxonomy,
+        "rank_diff_results": rank_diff_results,
+        "phylum_composition": phylum_composition,
     }
     generate_html_report(str(out), report_data)
 
@@ -229,57 +264,173 @@ def _write_pairwise_permanova(results: list, path: Path) -> None:
             ])
 
 
-def _write_differential(result, g1: str, g2: str, path: Path) -> None:
+def _write_differential(
+    result, g1: str, g2: str, path: Path,
+    taxonomy: TaxonomyTable | None = None,
+) -> None:
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["MAG_ID", "CLR_diff", "p_value", "q_value", "cohens_d"])
+        if taxonomy:
+            w.writerow(["MAG_ID", "phylum", "class", "genus",
+                         "CLR_diff", "p_value", "q_value", "cohens_d"])
+            tax_cols = taxonomy.lookup_columns(result.mag_ids)
+        else:
+            w.writerow(["MAG_ID", "CLR_diff", "p_value", "q_value", "cohens_d"])
+            tax_cols = None
         for i, mag_id in enumerate(result.mag_ids):
-            w.writerow([
-                mag_id,
+            row = [mag_id]
+            if tax_cols:
+                row.extend([tax_cols[i]["phylum"], tax_cols[i]["class"], tax_cols[i]["genus"]])
+            row.extend([
                 f"{result.log_fold_changes[i]:.4f}",
                 f"{result.p_values[i]:.6f}",
                 f"{result.q_values[i]:.6f}",
                 f"{result.effect_sizes[i]:.4f}",
             ])
+            w.writerow(row)
 
 
-def _write_indicator(result, path: Path) -> None:
+def _write_indicator(
+    result, path: Path,
+    taxonomy: TaxonomyTable | None = None,
+) -> None:
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["MAG_ID", "best_group", "indval", "specificity", "fidelity", "p_value"])
+        if taxonomy:
+            w.writerow(["MAG_ID", "phylum", "class", "genus",
+                         "best_group", "indval", "specificity", "fidelity", "p_value"])
+            tax_cols = taxonomy.lookup_columns(result.mag_ids)
+        else:
+            w.writerow(["MAG_ID", "best_group", "indval", "specificity", "fidelity", "p_value"])
+            tax_cols = None
         for i, mag_id in enumerate(result.mag_ids):
-            w.writerow([
-                mag_id,
+            row = [mag_id]
+            if tax_cols:
+                row.extend([tax_cols[i]["phylum"], tax_cols[i]["class"], tax_cols[i]["genus"]])
+            row.extend([
                 result.best_group[i],
                 f"{result.indval_scores[i]:.4f}",
                 f"{result.specificity[i]:.4f}",
                 f"{result.fidelity[i]:.4f}",
                 f"{result.p_values[i]:.4f}",
             ])
+            w.writerow(row)
 
 
-def _write_core_microbiome(result, path: Path) -> None:
+def _write_core_microbiome(
+    result, path: Path,
+    taxonomy: TaxonomyTable | None = None,
+) -> None:
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["threshold", "group", "n_core_mags", "core_mag_ids"])
+        if taxonomy:
+            w.writerow(["threshold", "group", "n_core_mags", "core_mag_ids", "core_mag_phyla"])
+        else:
+            w.writerow(["threshold", "group", "n_core_mags", "core_mag_ids"])
         for t in result.thresholds:
             for g, mags in sorted(result.core_mags_per_threshold[t].items()):
-                w.writerow([f"{t:.2f}", g, len(mags), ";".join(mags)])
+                row = [f"{t:.2f}", g, len(mags), ";".join(mags)]
+                if taxonomy:
+                    phyla = []
+                    for m in mags:
+                        rec = taxonomy.get(m)
+                        phyla.append(rec.phylum if rec and rec.phylum else "Unclassified")
+                    row.append(";".join(phyla))
+                w.writerow(row)
             # Shared across all groups
             shared = result.shared_across_groups[t]
-            w.writerow([f"{t:.2f}", "_ALL_GROUPS_", len(shared), ";".join(shared)])
+            row = [f"{t:.2f}", "_ALL_GROUPS_", len(shared), ";".join(shared)]
+            if taxonomy:
+                phyla = []
+                for m in shared:
+                    rec = taxonomy.get(m)
+                    phyla.append(rec.phylum if rec and rec.phylum else "Unclassified")
+                row.append(";".join(phyla))
+            w.writerow(row)
 
 
-def _write_specificity(result, path: Path) -> None:
+def _write_specificity(
+    result, path: Path,
+    taxonomy: TaxonomyTable | None = None,
+) -> None:
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["MAG_ID", "specificity_score", "dominant_compartment"])
+        if taxonomy:
+            w.writerow(["MAG_ID", "phylum", "class", "genus",
+                         "specificity_score", "dominant_compartment"])
+            tax_cols = taxonomy.lookup_columns(result.mag_ids)
+        else:
+            w.writerow(["MAG_ID", "specificity_score", "dominant_compartment"])
+            tax_cols = None
         for i, mag_id in enumerate(result.mag_ids):
-            w.writerow([
-                mag_id,
+            row = [mag_id]
+            if tax_cols:
+                row.extend([tax_cols[i]["phylum"], tax_cols[i]["class"], tax_cols[i]["genus"]])
+            row.extend([
                 f"{result.scores[i]:.4f}",
                 result.dominant_compartment[i],
             ])
+            w.writerow(row)
+
+
+def _write_phylum_composition(
+    abundance: AbundanceTable,
+    taxonomy: TaxonomyTable,
+    metadata: SampleMetadata,
+    grouping_var: str,
+    path: Path,
+) -> dict[str, dict[str, tuple[float, float]]]:
+    """Write mean +/- SD relative abundance per phylum per group.
+
+    Returns dict mapping phylum -> group -> (mean, sd).
+    """
+    rel = abundance.normalize()
+    agg = taxonomy.aggregate_at_rank(rel, "phylum")
+    groups = metadata.get_groups(grouping_var)
+    group_names = sorted(groups.keys())
+    sid_to_idx = {s: i for i, s in enumerate(abundance.sample_ids)}
+
+    phylum_names = sorted(agg.keys())
+    composition: dict[str, dict[str, tuple[float, float]]] = {}
+
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        header = ["phylum"]
+        for g in group_names:
+            header.extend([f"{g}_mean", f"{g}_sd"])
+        w.writerow(header)
+
+        for phylum in phylum_names:
+            composition[phylum] = {}
+            row: list[str] = [phylum]
+            for g in group_names:
+                indices = [sid_to_idx[s] for s in groups[g] if s in sid_to_idx]
+                if indices:
+                    vals = agg[phylum][indices]
+                    m, sd = float(vals.mean()), float(vals.std())
+                else:
+                    m, sd = 0.0, 0.0
+                composition[phylum][g] = (m, sd)
+                row.extend([f"{m:.6f}", f"{sd:.6f}"])
+            w.writerow(row)
+
+    return composition
+
+
+def _taxonomy_breakdown(
+    mag_ids: list[str],
+    taxonomy: TaxonomyTable,
+    rank: str = "phylum",
+) -> dict[str, int]:
+    """Count MAGs by taxon at *rank*."""
+    counts: dict[str, int] = {}
+    for mag_id in mag_ids:
+        rec = taxonomy.get(mag_id)
+        taxon = rec.rank(rank) if rec else ""
+        if not taxon:
+            taxon = "Unclassified"
+        counts[taxon] = counts.get(taxon, 0) + 1
+    return counts
 
 
 def _write_summary(

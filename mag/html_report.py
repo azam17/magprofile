@@ -51,6 +51,16 @@ def _sig_text(p: float) -> str:
     return "ns"
 
 
+def _tax_label(taxonomy, mag_id: str) -> str:
+    """Return phylum label for a MAG, or empty string."""
+    if not taxonomy:
+        return ""
+    rec = taxonomy.get(mag_id)
+    if rec and rec.phylum:
+        return rec.phylum
+    return ""
+
+
 CSS = """
 :root {
     --primary: #2c3e50;
@@ -130,6 +140,31 @@ document.addEventListener('DOMContentLoaded', function() {
 """
 
 
+def _phylum_breakdown_summary(
+    mag_ids: list[str], taxonomy, q_values=None, threshold: float = 0.05,
+) -> str:
+    """Return an HTML summary like 'Among 12 sig MAGs: 5 Proteobacteria, 3 Firmicutes...'"""
+    if not taxonomy:
+        return ""
+    if q_values is not None:
+        sig_mags = [m for m, q in zip(mag_ids, q_values) if q < threshold]
+    else:
+        sig_mags = mag_ids
+    if not sig_mags:
+        return ""
+    counts: dict[str, int] = {}
+    for m in sig_mags:
+        rec = taxonomy.get(m)
+        phylum = rec.phylum if rec and rec.phylum else "Unclassified"
+        counts[phylum] = counts.get(phylum, 0) + 1
+    sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    parts = [f"{n} {p}" for p, n in sorted_counts]
+    return (
+        f'<div class="interpretation">Among {len(sig_mags)} significant MAGs: '
+        f'{", ".join(parts)}.</div>'
+    )
+
+
 def generate_html_report(output_dir: str, report_data: dict) -> str:
     """Generate a self-contained HTML report with embedded figures and narratives.
 
@@ -154,6 +189,12 @@ def generate_html_report(output_dir: str, report_data: dict) -> str:
     n_before = report_data["n_mags_before"]
     n_after = report_data["n_mags_after"]
     min_prev = report_data["min_prevalence"]
+    taxonomy = report_data.get("taxonomy")
+    rank_diff_results = report_data.get("rank_diff_results", [])
+    phylum_composition = report_data.get("phylum_composition")
+
+    # Taxonomy column helpers
+    has_tax = taxonomy is not None
 
     # --- Executive Summary ---
     exec_lines = []
@@ -324,16 +365,32 @@ def generate_html_report(output_dir: str, report_data: dict) -> str:
             s += f'<div class="interpretation">{n_sig} MAGs differentially abundant: '
             s += f"{n_up} enriched in {g1}, {n_down} enriched in {g2}.</div>"
 
+            # Phylum breakdown of significant MAGs
+            if has_tax and n_sig > 0:
+                s += _phylum_breakdown_summary(diff.mag_ids, taxonomy, diff.q_values)
+
             # Top significant MAGs table
             if n_sig > 0:
                 sig_idx = np.where(diff.q_values < 0.05)[0]
                 top_idx = sig_idx[np.argsort(np.abs(diff.effect_sizes[sig_idx]))[::-1][:10]]
                 s += "<table><thead><tr>"
-                s += '<th data-sort="0">MAG</th><th data-sort="1">CLR Diff</th>'
-                s += '<th data-sort="2">q-value</th><th data-sort="3">Cohen\'s d</th>'
+                s += '<th data-sort="0">MAG</th>'
+                if has_tax:
+                    s += '<th data-sort="1">Phylum</th><th data-sort="2">Class</th><th data-sort="3">Genus</th>'
+                    ci = 4
+                else:
+                    ci = 1
+                s += f'<th data-sort="{ci}">CLR Diff</th>'
+                s += f'<th data-sort="{ci+1}">q-value</th><th data-sort="{ci+2}">Cohen\'s d</th>'
                 s += "</tr></thead><tbody>"
+                if has_tax:
+                    tax_cols = taxonomy.lookup_columns(diff.mag_ids)
                 for i in top_idx:
                     s += f"<tr><td>{diff.mag_ids[i]}</td>"
+                    if has_tax:
+                        s += f"<td>{tax_cols[i]['phylum']}</td>"
+                        s += f"<td>{tax_cols[i]['class']}</td>"
+                        s += f"<td>{tax_cols[i]['genus']}</td>"
                     s += f"<td>{diff.log_fold_changes[i]:.3f}</td>"
                     s += f"<td>{diff.q_values[i]:.4f}</td>"
                     s += f"<td>{diff.effect_sizes[i]:.3f}</td></tr>"
@@ -358,9 +415,17 @@ def generate_html_report(output_dir: str, report_data: dict) -> str:
 
     # Top 10 per group table
     s += "<table><thead><tr>"
-    s += '<th data-sort="0">MAG</th><th data-sort="1">Group</th>'
-    s += '<th data-sort="2">IndVal</th><th data-sort="3">p-value</th>'
-    s += '<th>Significance</th></tr></thead><tbody>'
+    s += '<th data-sort="0">MAG</th>'
+    if has_tax:
+        s += '<th data-sort="1">Phylum</th><th data-sort="2">Class</th><th data-sort="3">Genus</th>'
+        ci = 4
+    else:
+        ci = 1
+    s += f'<th data-sort="{ci}">Group</th><th data-sort="{ci+1}">IndVal</th>'
+    s += f'<th data-sort="{ci+2}">p-value</th><th>Significance</th></tr></thead><tbody>'
+
+    if has_tax:
+        ind_tax_cols = taxonomy.lookup_columns(ind.mag_ids)
 
     for g in group_names:
         mask = [bg == g for bg in ind.best_group]
@@ -368,7 +433,12 @@ def generate_html_report(output_dir: str, report_data: dict) -> str:
         sorted_idx = sorted(indices, key=lambda i: ind.indval_scores[i], reverse=True)[:10]
         for i in sorted_idx:
             sig_cls = _sig_color(ind.p_values[i])
-            s += f"<tr><td>{ind.mag_ids[i]}</td><td>{g}</td>"
+            s += f"<tr><td>{ind.mag_ids[i]}</td>"
+            if has_tax:
+                s += f"<td>{ind_tax_cols[i]['phylum']}</td>"
+                s += f"<td>{ind_tax_cols[i]['class']}</td>"
+                s += f"<td>{ind_tax_cols[i]['genus']}</td>"
+            s += f"<td>{g}</td>"
             s += f"<td>{ind.indval_scores[i]:.3f}</td>"
             s += f'<td>{ind.p_values[i]:.4f}</td>'
             s += f'<td><span class="{sig_cls}">{_sig_text(ind.p_values[i])}</span></td></tr>'
@@ -414,10 +484,22 @@ def generate_html_report(output_dir: str, report_data: dict) -> str:
     # Top specialists table
     top_spec_idx = np.argsort(cs.scores)[::-1][:15]
     s += "<table><thead><tr>"
-    s += '<th data-sort="0">MAG</th><th data-sort="1">Specificity Score</th>'
-    s += '<th data-sort="2">Dominant Compartment</th></tr></thead><tbody>'
+    s += '<th data-sort="0">MAG</th>'
+    if has_tax:
+        s += '<th data-sort="1">Phylum</th><th data-sort="2">Class</th><th data-sort="3">Genus</th>'
+        ci = 4
+    else:
+        ci = 1
+    s += f'<th data-sort="{ci}">Specificity Score</th>'
+    s += f'<th data-sort="{ci+1}">Dominant Compartment</th></tr></thead><tbody>'
+    if has_tax:
+        cs_tax_cols = taxonomy.lookup_columns(cs.mag_ids)
     for i in top_spec_idx:
         s += f"<tr><td>{cs.mag_ids[i]}</td>"
+        if has_tax:
+            s += f"<td>{cs_tax_cols[i]['phylum']}</td>"
+            s += f"<td>{cs_tax_cols[i]['class']}</td>"
+            s += f"<td>{cs_tax_cols[i]['genus']}</td>"
         s += f"<td>{cs.scores[i]:.3f}</td>"
         s += f"<td>{cs.dominant_compartment[i]}</td></tr>"
     s += "</tbody></table>"
@@ -427,13 +509,59 @@ def generate_html_report(output_dir: str, report_data: dict) -> str:
     # --- 8. Taxonomy ---
     tax_fig = out / "taxonomy_bars.pdf"
     tax_grp_fig = out / "taxonomy_bars_grouped.pdf"
-    if tax_fig.exists() or tax_grp_fig.exists():
+    has_tax_figs = tax_fig.exists() or tax_grp_fig.exists()
+    has_phylum_data = phylum_composition or rank_diff_results
+
+    if has_tax_figs or has_phylum_data:
         sid = "taxonomy"
         s = f'<h2 data-toggle="{sid}">Taxonomy</h2>\n<div class="section" id="{sid}"><div class="section-content">'
+
         if tax_grp_fig.exists():
             s += f'<div class="figure">{_embed_figure(tax_grp_fig)}</div>'
         if tax_fig.exists():
             s += f'<div class="figure">{_embed_figure(tax_fig)}</div>'
+
+        # Phylum composition table
+        if phylum_composition:
+            s += "<h3>Phylum Composition by Group</h3>"
+            s += "<table><thead><tr><th>Phylum</th>"
+            for g in group_names:
+                s += f"<th>{g} (mean &plusmn; SD)</th>"
+            s += "</tr></thead><tbody>"
+            # Sort by total mean abundance
+            sorted_phyla = sorted(
+                phylum_composition.keys(),
+                key=lambda p: sum(v[0] for v in phylum_composition[p].values()),
+                reverse=True,
+            )
+            for phylum in sorted_phyla:
+                s += f"<tr><td>{phylum}</td>"
+                for g in group_names:
+                    m, sd = phylum_composition[phylum].get(g, (0.0, 0.0))
+                    s += f"<td>{m*100:.1f}% &plusmn; {sd*100:.1f}%</td>"
+                s += "</tr>"
+            s += "</tbody></table>"
+
+        # Phylum-level differential abundance
+        if rank_diff_results:
+            s += "<h3>Phylum-Level Differential Abundance</h3>"
+            for g1, g2, rdiff in rank_diff_results:
+                n_sig = int(np.sum(rdiff.q_values < 0.05))
+                s += f"<h4>{g1} vs {g2} ({n_sig} significant phyla)</h4>"
+                s += "<table><thead><tr>"
+                s += '<th data-sort="0">Phylum</th><th data-sort="1">CLR Diff</th>'
+                s += '<th data-sort="2">q-value</th><th data-sort="3">Cohen\'s d</th>'
+                s += "<th>Significance</th></tr></thead><tbody>"
+                order = np.argsort(rdiff.q_values)
+                for i in order:
+                    sig_cls = _sig_color(rdiff.q_values[i])
+                    s += f"<tr><td>{rdiff.mag_ids[i]}</td>"
+                    s += f"<td>{rdiff.log_fold_changes[i]:.3f}</td>"
+                    s += f"<td>{rdiff.q_values[i]:.4f}</td>"
+                    s += f"<td>{rdiff.effect_sizes[i]:.3f}</td>"
+                    s += f'<td><span class="{sig_cls}">{_sig_text(rdiff.q_values[i])}</span></td></tr>'
+                s += "</tbody></table>"
+
         s += "</div></div>"
         sections.append(s)
 

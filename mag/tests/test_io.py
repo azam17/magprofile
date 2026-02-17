@@ -124,3 +124,54 @@ class TestTaxonomyAggregation:
         agg = tax.aggregate_at_rank(table, "phylum")
         assert agg["P1"][0] == 30.0
         assert agg["P2"][0] == 30.0
+
+
+class TestLookupColumns:
+    def _make_tax(self):
+        return TaxonomyTable(
+            records={
+                "a": TaxonomyRecord(mag_id="a", phylum="P1", class_="C1", genus="G1"),
+                "b": TaxonomyRecord(mag_id="b", phylum="P2", class_="C2", genus="G2"),
+            }
+        )
+
+    def test_lookup_columns(self):
+        tax = self._make_tax()
+        cols = tax.lookup_columns(["a", "b"])
+        assert cols[0]["phylum"] == "P1"
+        assert cols[0]["genus"] == "G1"
+        assert cols[1]["phylum"] == "P2"
+        assert cols[1]["class"] == "C2"
+
+    def test_lookup_columns_missing_mag(self):
+        tax = self._make_tax()
+        cols = tax.lookup_columns(["a", "unknown"])
+        assert cols[0]["phylum"] == "P1"
+        assert cols[1]["phylum"] == ""
+        assert cols[1]["class"] == ""
+        assert cols[1]["genus"] == ""
+
+
+class TestAggregateToAbundanceTable:
+    def test_shape_and_totals(self):
+        table = AbundanceTable(
+            mag_ids=["a", "b", "c"],
+            sample_ids=["s1", "s2"],
+            abundances=np.array([[10.0, 5.0], [20.0, 15.0], [30.0, 25.0]]),
+        )
+        tax = TaxonomyTable(
+            records={
+                "a": TaxonomyRecord(mag_id="a", phylum="P1"),
+                "b": TaxonomyRecord(mag_id="b", phylum="P1"),
+                "c": TaxonomyRecord(mag_id="c", phylum="P2"),
+            }
+        )
+        agg_table = tax.aggregate_to_abundance_table(table, "phylum")
+        assert isinstance(agg_table, AbundanceTable)
+        assert set(agg_table.mag_ids) == {"P1", "P2"}
+        assert agg_table.sample_ids == ["s1", "s2"]
+        # Total abundance preserved per sample
+        np.testing.assert_allclose(
+            agg_table.abundances.sum(axis=0),
+            table.abundances.sum(axis=0),
+        )

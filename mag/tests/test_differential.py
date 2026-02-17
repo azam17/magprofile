@@ -3,7 +3,13 @@
 import numpy as np
 import pytest
 
-from mag.differential import _bh_fdr, clr_transform, cohens_d, differential_abundance
+from mag.differential import (
+    _bh_fdr,
+    clr_transform,
+    cohens_d,
+    differential_abundance,
+    rank_level_differential_abundance,
+)
 from mag.io import AbundanceTable, SampleMetadata
 from mag.tests.fixtures import generate_synthetic_abundance_table
 
@@ -59,3 +65,18 @@ class TestDifferentialAbundance:
         table, meta, _ = generate_synthetic_abundance_table()
         with pytest.raises(ValueError):
             differential_abundance(table, meta, "compartment", "topsoil", "nonexistent")
+
+
+class TestRankLevelDifferential:
+    def test_phylum_level(self):
+        table, meta, tax = generate_synthetic_abundance_table(seed=42)
+        result = rank_level_differential_abundance(
+            table, tax, meta, "compartment", "topsoil", "bulk", rank="phylum",
+        )
+        # Should have ~5 phyla (from fixtures: 5 distinct phyla)
+        assert len(result.mag_ids) <= 6  # 5 phyla + possible Unclassified
+        assert len(result.mag_ids) >= 2
+        assert np.all(result.q_values >= 0)
+        assert np.all(result.q_values <= 1)
+        # mag_ids are taxon names, not MAG IDs
+        assert all(not m.startswith("MAG_") for m in result.mag_ids)
