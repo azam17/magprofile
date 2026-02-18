@@ -1,0 +1,202 @@
+"""Tests for mag.net_topology module."""
+
+import numpy as np
+import pytest
+
+from mag.io import AbundanceTable
+from mag.net_correlation import NetworkResult
+from mag.net_topology import (
+    KeystoneTaxaResult,
+    NetworkTopology,
+    compute_topology,
+    differential_network,
+    identify_keystones,
+)
+
+
+@pytest.fixture
+def star_network() -> NetworkResult:
+    """Star topology: M0 connected to M1,M2,M3,M4 plus M1-M2 edge.
+
+    M0 is the central hub with degree 4.
+    M1 and M2 each have degree 2 (connected to M0 and each other).
+    M3 and M4 each have degree 1 (connected only to M0).
+    """
+    mag_ids = ["M0", "M1", "M2", "M3", "M4"]
+    n = len(mag_ids)
+    adjacency = np.zeros((n, n), dtype=np.float64)
+    edges = [
+        ("M0", "M1", 0.1),
+        ("M0", "M2", 0.2),
+        ("M0", "M3", 0.15),
+        ("M0", "M4", 0.18),
+        ("M1", "M2", 0.25),
+    ]
+    idx = {m: i for i, m in enumerate(mag_ids)}
+    for a, b, _ in edges:
+        adjacency[idx[a], idx[b]] = 1.0
+        adjacency[idx[b], idx[a]] = 1.0
+
+    return NetworkResult(
+        mag_ids=mag_ids,
+        adjacency=adjacency,
+        edges=edges,
+        threshold=0.3,
+    )
+
+
+@pytest.fixture
+def star_abundance() -> AbundanceTable:
+    """Abundance table where M0 is rare (low abundance) and others are common."""
+    return AbundanceTable(
+        mag_ids=["M0", "M1", "M2", "M3", "M4"],
+        sample_ids=["s1", "s2", "s3"],
+        abundances=np.array([
+            [1.0, 2.0, 1.0],     # M0: low abundance (mean=1.33)
+            [100.0, 120.0, 110.0],  # M1: high
+            [90.0, 95.0, 100.0],    # M2: high
+            [80.0, 85.0, 90.0],     # M3: high
+            [70.0, 75.0, 80.0],     # M4: high
+        ]),
+    )
+
+
+@pytest.fixture
+def empty_network() -> NetworkResult:
+    """Network with nodes but no edges."""
+    mag_ids = ["M0", "M1", "M2"]
+    n = len(mag_ids)
+    return NetworkResult(
+        mag_ids=mag_ids,
+        adjacency=np.zeros((n, n), dtype=np.float64),
+        edges=[],
+        threshold=0.0,
+    )
+
+
+class TestComputeTopology:
+    def test_returns_topology(self, star_network):
+        topo = compute_topology(star_network)
+        assert isinstance(topo, NetworkTopology)
+        assert topo.mag_ids == star_network.mag_ids
+        assert len(topo.degree) == 5
+        assert len(topo.betweenness) == 5
+        assert len(topo.closeness) == 5
+        assert len(topo.hub_scores) == 5
+        assert len(topo.module_assignments) == 5
+        assert isinstance(topo.modularity, float)
+
+    def test_degree_correct(self, star_network):
+        topo = compute_topology(star_network)
+        idx = {m: i for i, m in enumerate(topo.mag_ids)}
+        # Degree centrality: degree / (n-1) where n=5
+        # M0 has 4 connections -> 4/4 = 1.0
+        # M3 has 1 connection -> 1/4 = 0.25
+        assert topo.degree[idx["M0"]] == pytest.approx(1.0)
+        assert topo.degree[idx["M3"]] == pytest.approx(0.25)
+
+    def test_betweenness_hub(self, star_network):
+        """M0 (center of star) should have the highest betweenness."""
+        topo = compute_topology(star_network)
+        idx = {m: i for i, m in enumerate(topo.mag_ids)}
+        m0_betweenness = topo.betweenness[idx["M0"]]
+        for mag_id in ["M1", "M2", "M3", "M4"]:
+            assert m0_betweenness >= topo.betweenness[idx[mag_id]], (
+                f"M0 betweenness ({m0_betweenness:.4f}) should be >= "
+                f"{mag_id} betweenness ({topo.betweenness[idx[mag_id]]:.4f})"
+            )
+
+    def test_modularity_computed(self, star_network):
+        topo = compute_topology(star_network)
+        # Modularity should be a finite number
+        assert np.isfinite(topo.modularity)
+        # Module assignments should be non-negative integers
+        assert topo.module_assignments.dtype == int
+        assert (topo.module_assignments >= 0).all()
+
+    def test_empty_network(self, empty_network):
+        topo = compute_topology(empty_network)
+        assert isinstance(topo, NetworkTopology)
+        np.testing.assert_array_equal(topo.degree, np.zeros(3))
+        np.testing.assert_array_equal(topo.betweenness, np.zeros(3))
+        np.testing.assert_array_equal(topo.closeness, np.zeros(3))
+        np.testing.assert_array_equal(topo.hub_scores, np.zeros(3))
+        assert topo.modularity == 0.0
+        np.testing.assert_array_equal(topo.module_assignments, np.zeros(3, dtype=int))
+
+
+class TestIdentifyKeystones:
+    def test_hub_is_keystone(self, star_network, star_abundance):
+        """M0 has highest centrality and lowest abundance -> keystone."""
+        topo = compute_topology(star_network)
+        result = identify_keystones(
+            topo,
+            star_abundance,
+            betweenness_threshold=0.5,
+            abundance_threshold=0.5,
+        )
+        assert isinstance(result, KeystoneTaxaResult)
+        idx = {m: i for i, m in enumerate(result.mag_ids)}
+
+        # M0 should be a keystone (high betweenness, low abundance)
+        assert result.is_keystone[idx["M0"]], "M0 should be keystone"
+        # M0 should have the highest keystone score
+        assert result.keystone_scores[idx["M0"]] == result.keystone_scores.max()
+
+        # Metrics dict should have expected keys
+        assert "betweenness" in result.metrics
+        assert "mean_abundance" in result.metrics
+        assert "normalized_betweenness" in result.metrics
+        assert "normalized_abundance" in result.metrics
+
+    def test_empty_network_no_keystones(self, empty_network):
+        abundance = AbundanceTable(
+            mag_ids=["M0", "M1", "M2"],
+            sample_ids=["s1", "s2"],
+            abundances=np.array([[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]]),
+        )
+        topo = compute_topology(empty_network)
+        result = identify_keystones(topo, abundance)
+        # No edges -> no betweenness -> no keystones
+        assert not result.is_keystone.any()
+        np.testing.assert_array_equal(result.keystone_scores, np.zeros(3))
+
+
+class TestDifferentialNetwork:
+    def test_finds_gained_lost_edges(self):
+        """net1 has M0-M1 and M0-M2; net2 has M0-M1 and M1-M2.
+
+        Conserved: M0-M1
+        Lost:      M0-M2 (in net1, not in net2)
+        Gained:    M1-M2 (in net2, not in net1)
+        """
+        mag_ids = ["M0", "M1", "M2"]
+        n = len(mag_ids)
+
+        adj1 = np.zeros((n, n), dtype=np.float64)
+        adj1[0, 1] = adj1[1, 0] = 1.0
+        adj1[0, 2] = adj1[2, 0] = 1.0
+        net1 = NetworkResult(
+            mag_ids=mag_ids,
+            adjacency=adj1,
+            edges=[("M0", "M1", 0.1), ("M0", "M2", 0.2)],
+            threshold=0.3,
+        )
+
+        adj2 = np.zeros((n, n), dtype=np.float64)
+        adj2[0, 1] = adj2[1, 0] = 1.0
+        adj2[1, 2] = adj2[2, 1] = 1.0
+        net2 = NetworkResult(
+            mag_ids=mag_ids,
+            adjacency=adj2,
+            edges=[("M0", "M1", 0.1), ("M1", "M2", 0.15)],
+            threshold=0.3,
+        )
+
+        result = differential_network(net1, net2)
+        assert ("M0", "M1") in result["conserved"]
+        assert ("M0", "M2") in result["lost"]
+        assert ("M1", "M2") in result["gained"]
+        assert len(result["conserved"]) == 1
+        assert len(result["lost"]) == 1
+        assert len(result["gained"]) == 1
