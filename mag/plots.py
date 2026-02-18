@@ -515,3 +515,101 @@ def plot_indicator_species(
     fig.tight_layout()
     fig.savefig(output, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_pgpr_matrix(
+    pgpr_table,
+    taxonomy=None,
+    top_n: int = 30,
+    output: str | Path = "pgpr_traits.pdf",
+) -> None:
+    """Binary heatmap of PGPR traits per MAG."""
+    _setup_style()
+    # Select MAGs with at least one trait
+    has_trait = pgpr_table.values.sum(axis=0) > 0
+    mag_indices = np.where(has_trait)[0][:top_n]
+
+    if len(mag_indices) == 0:
+        fig, ax = plt.subplots(figsize=(8, 3))
+        ax.text(0.5, 0.5, "No MAGs with PGPR traits detected", ha="center", va="center", transform=ax.transAxes)
+        fig.savefig(str(output), bbox_inches="tight")
+        plt.close(fig)
+        return
+
+    subset = pgpr_table.values[:, mag_indices]
+    mag_labels = [pgpr_table.mag_ids[i] for i in mag_indices]
+    if taxonomy:
+        new_labels = []
+        for m in mag_labels:
+            rec = taxonomy.get(m)
+            if rec and rec.phylum:
+                new_labels.append(f"{m} ({rec.phylum})")
+            else:
+                new_labels.append(m)
+        mag_labels = new_labels
+
+    fig, ax = plt.subplots(figsize=(max(8, len(mag_labels) * 0.4), max(4, len(pgpr_table.function_ids) * 0.5)))
+    ax.imshow(subset, cmap="YlGn", aspect="auto", vmin=0, vmax=1)
+    ax.set_xticks(range(len(mag_labels)))
+    ax.set_xticklabels(mag_labels, rotation=90, fontsize=7)
+    ax.set_yticks(range(len(pgpr_table.function_ids)))
+    ax.set_yticklabels(pgpr_table.function_ids, fontsize=9)
+    ax.set_title("PGPR Trait Presence")
+    fig.savefig(str(output), bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_cazyme_bars(
+    cazy_table,
+    metadata,
+    grouping_var: str,
+    abundance,
+    output: str | Path = "cazyme_bars.pdf",
+) -> None:
+    """Stacked bar chart of CAZyme classes per group."""
+    from .func_profile import pathway_abundance as _pathway_abundance
+
+    _setup_style()
+    groups = metadata.get_groups(grouping_var)
+    group_names = sorted(groups.keys())
+
+    # Get CAZyme abundance per sample
+    cazy_abund = _pathway_abundance(cazy_table, abundance)
+
+    # Aggregate by class prefix per group
+    class_totals: dict[str, dict[str, float]] = {}
+    for fi, fam_id in enumerate(cazy_abund.mag_ids):
+        prefix = ""
+        for ch in fam_id:
+            if ch.isalpha():
+                prefix += ch
+            else:
+                break
+        if not prefix:
+            prefix = "Other"
+        if prefix not in class_totals:
+            class_totals[prefix] = {g: 0.0 for g in group_names}
+        for g in group_names:
+            g_samples = groups[g]
+            g_idx = [cazy_abund.sample_ids.index(s) for s in g_samples if s in set(cazy_abund.sample_ids)]
+            if g_idx:
+                class_totals[prefix][g] += float(cazy_abund.abundances[fi, g_idx].mean())
+
+    classes = sorted(class_totals.keys())
+    fig, ax = plt.subplots(figsize=(max(6, len(group_names) * 1.5), 5))
+    x = np.arange(len(group_names))
+    bottom = np.zeros(len(group_names))
+    colors = sns.color_palette("Set2", len(classes))
+
+    for ci, cls in enumerate(classes):
+        vals = np.array([class_totals[cls][g] for g in group_names])
+        ax.bar(x, vals, bottom=bottom, label=cls, color=colors[ci % len(colors)])
+        bottom += vals
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(group_names, rotation=45, ha="right")
+    ax.set_ylabel("Mean weighted abundance")
+    ax.set_title("CAZyme Class Abundance by Group")
+    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    fig.savefig(str(output), bbox_inches="tight")
+    plt.close(fig)

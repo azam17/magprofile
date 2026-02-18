@@ -133,3 +133,24 @@ def report(abundance: str, taxonomy: str | None, metadata: str, group: str, perm
 
     generate_report(table, tax, meta, group, output, n_permutations=permutations, min_prevalence=min_prevalence)
     click.echo(f"Full report written to {output}/")
+
+
+@main.command("func-report")
+@click.option("--abundance", "-a", required=True, type=click.Path(exists=True), help="Abundance table TSV")
+@click.option("--dram-annotations", "-d", required=True, type=click.Path(exists=True), help="DRAM annotations.tsv")
+@click.option("--taxonomy", "-t", default=None, type=click.Path(exists=True), help="Taxonomy TSV (optional)")
+@click.option("--metadata", "-m", required=True, type=click.Path(exists=True), help="Sample metadata TSV")
+@click.option("--group", "-g", default="compartment", help="Metadata variable for grouping")
+@click.option("--output", "-o", default="func_results", help="Output directory")
+def func_report(abundance: str, dram_annotations: str, taxonomy: str | None, metadata: str, group: str, output: str) -> None:
+    """Run functional profiling pipeline (magfunc)."""
+    from .func_io import load_dram_annotations
+    from .func_report import generate_func_report
+
+    table = load_abundance_table(abundance)
+    annots = load_dram_annotations(dram_annotations)
+    tax = load_taxonomy(taxonomy) if taxonomy else None
+    meta = load_metadata(metadata)
+
+    generate_func_report(table, annots, tax, meta, group, output)
+    click.echo(f"Functional profiling report written to {output}/")
