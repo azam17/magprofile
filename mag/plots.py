@@ -613,3 +613,92 @@ def plot_cazyme_bars(
     ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
     fig.savefig(str(output), bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_network_graph(
+    network,
+    taxonomy=None,
+    output: str | Path = "network_graph.pdf",
+) -> None:
+    """Force-directed network graph with nodes colored by phylum."""
+    import networkx as nx
+
+    _setup_style()
+    G = nx.Graph()
+    G.add_nodes_from(network.mag_ids)
+    for m1, m2, w in network.edges:
+        G.add_edge(m1, m2, weight=w)
+
+    if G.number_of_edges() == 0:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, "No edges in network", ha="center", va="center", transform=ax.transAxes)
+        fig.savefig(str(output), bbox_inches="tight")
+        plt.close(fig)
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    pos = nx.spring_layout(G, seed=42, k=2/np.sqrt(len(network.mag_ids)))
+
+    # Color by phylum
+    if taxonomy:
+        phyla = set()
+        for m in network.mag_ids:
+            rec = taxonomy.get(m)
+            phyla.add(rec.phylum if rec else "Unknown")
+        phyla_list = sorted(phyla)
+        phyla_colors = {p: PALETTE[i % len(PALETTE)] for i, p in enumerate(phyla_list)}
+
+        node_colors = []
+        for m in G.nodes():
+            rec = taxonomy.get(m)
+            p = rec.phylum if rec else "Unknown"
+            node_colors.append(phyla_colors[p])
+    else:
+        node_colors = [PALETTE[0]] * len(G.nodes())
+
+    # Node size by degree
+    degrees = dict(G.degree())
+    node_sizes = [max(20, degrees.get(m, 0) * 15) for m in G.nodes()]
+
+    nx.draw_networkx_edges(G, pos, alpha=0.2, ax=ax)
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, alpha=0.8, ax=ax)
+    ax.set_title(f"Co-occurrence Network ({len(network.edges)} edges)")
+    ax.axis("off")
+
+    if taxonomy:
+        # Legend for top phyla
+        from matplotlib.lines import Line2D
+        phyla_in_net = set()
+        for m in G.nodes():
+            rec = taxonomy.get(m)
+            phyla_in_net.add(rec.phylum if rec else "Unknown")
+        legend_elements = [
+            Line2D([0], [0], marker="o", color="w", markerfacecolor=phyla_colors[p], markersize=8, label=p)
+            for p in sorted(phyla_in_net)[:10]
+        ]
+        ax.legend(handles=legend_elements, loc="upper left", fontsize=7)
+
+    fig.savefig(str(output), bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_degree_distribution(
+    topology,
+    output: str | Path = "degree_distribution.pdf",
+) -> None:
+    """Histogram of node degree distribution."""
+    _setup_style()
+    fig, ax = plt.subplots(figsize=(7, 5))
+    degrees = topology.degree[topology.degree > 0]
+    if len(degrees) == 0:
+        ax.text(0.5, 0.5, "No connected nodes", ha="center", va="center", transform=ax.transAxes)
+    else:
+        n_bins = max(1, min(30, int(np.ceil(degrees.max() * 10))))
+        ax.hist(degrees, bins=n_bins, color=PALETTE[0], edgecolor="white")
+        ax.set_xlabel("Degree")
+        ax.set_ylabel("Number of MAGs")
+        ax.set_title("Degree Distribution")
+        ax.axvline(np.mean(degrees), color="red", linestyle="--", label=f"Mean={np.mean(degrees):.1f}")
+        ax.legend()
+    fig.savefig(str(output), bbox_inches="tight")
+    plt.close(fig)

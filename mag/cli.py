@@ -154,3 +154,23 @@ def func_report(abundance: str, dram_annotations: str, taxonomy: str | None, met
 
     generate_func_report(table, annots, tax, meta, group, output)
     click.echo(f"Functional profiling report written to {output}/")
+
+
+@main.command("net-report")
+@click.option("--abundance", "-a", required=True, type=click.Path(exists=True), help="Abundance table TSV")
+@click.option("--taxonomy", "-t", default=None, type=click.Path(exists=True), help="Taxonomy TSV (optional)")
+@click.option("--metadata", "-m", required=True, type=click.Path(exists=True), help="Sample metadata TSV")
+@click.option("--group", "-g", default="compartment", help="Metadata variable for grouping")
+@click.option("--threshold", default=5.0, type=float, help="Phi percentile threshold for edges (default 5)")
+@click.option("--min-prevalence", default=0.5, type=float, help="Min prevalence to include MAG in network (default 0.5)")
+@click.option("--output", "-o", default="net_results", help="Output directory")
+def net_report(abundance: str, taxonomy: str | None, metadata: str, group: str, threshold: float, min_prevalence: float, output: str) -> None:
+    """Run network analysis pipeline (magnet)."""
+    from .net_report import generate_net_report
+
+    table = load_abundance_table(abundance)
+    tax = load_taxonomy(taxonomy) if taxonomy else None
+    meta = load_metadata(metadata)
+
+    generate_net_report(table, tax, meta, group, output, threshold_percentile=threshold, min_prevalence=min_prevalence)
+    click.echo(f"Network analysis report written to {output}/")
