@@ -12,13 +12,21 @@ from pathlib import Path
 import numpy as np
 
 from .io import AbundanceTable, SampleMetadata, TaxonomyTable
-from .net_correlation import NetworkResult, build_network, proportionality
+from .net_correlation import (
+    NetworkResult,
+    ThresholdSensitivityResult,
+    build_network,
+    proportionality,
+    threshold_sensitivity,
+)
 from .net_topology import (
     KeystoneTaxaResult,
+    NullModelResult,
     NetworkTopology,
     compute_topology,
     differential_network,
     identify_keystones,
+    network_null_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +55,14 @@ def generate_net_report(
 
     keystones = identify_keystones(global_topo, abundance)
     _write_keystones_csv(keystones, out / "keystone_taxa.csv", taxonomy)
+
+    # Null model test for modularity
+    null_model = network_null_model(global_net)
+    _write_null_model_csv(null_model, out / "null_model.csv")
+
+    # Threshold sensitivity analysis
+    sensitivity = threshold_sensitivity(corr, abundance.mag_ids)
+    _write_sensitivity_csv(sensitivity, out / "threshold_sensitivity.csv")
 
     # Per-group networks
     groups = metadata.get_groups(grouping_var)
@@ -89,7 +105,39 @@ def generate_net_report(
     )
 
 
+def _write_null_model_csv(result: NullModelResult, path: Path) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["metric", "value"])
+        w.writerow(["observed_modularity", f"{result.observed_modularity:.6f}"])
+        w.writerow(["null_mean", f"{result.null_modularities.mean():.6f}"])
+        w.writerow(["null_sd", f"{result.null_modularities.std():.6f}"])
+        w.writerow(["z_score", f"{result.z_score:.4f}"])
+        w.writerow(["p_value", f"{result.p_value:.6f}"])
+
+
+def _write_sensitivity_csv(result: ThresholdSensitivityResult, path: Path) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["percentile", "threshold", "n_edges", "modularity", "n_modules"])
+        for i in range(len(result.percentiles)):
+            w.writerow([
+                f"{result.percentiles[i]:.1f}",
+                f"{result.thresholds[i]:.6f}",
+                int(result.n_edges[i]),
+                f"{result.modularities[i]:.6f}",
+                int(result.n_modules[i]),
+            ])
+
+
 def _write_edges_csv(net: NetworkResult, path: Path, taxonomy: TaxonomyTable | None) -> None:
+    # Build phylum lookup once
+    phylum_map: dict[str, str] = {}
+    if taxonomy:
+        for m in net.mag_ids:
+            rec = taxonomy.get(m)
+            phylum_map[m] = rec.phylum if rec else ""
+
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         header = ["MAG_1", "MAG_2", "phi"]
@@ -99,13 +147,22 @@ def _write_edges_csv(net: NetworkResult, path: Path, taxonomy: TaxonomyTable | N
         for m1, m2, phi in sorted(net.edges, key=lambda e: e[2]):
             row = [m1, m2, f"{phi:.6f}"]
             if taxonomy:
-                r1 = taxonomy.get(m1)
-                r2 = taxonomy.get(m2)
-                row.extend([r1.phylum if r1 else "", r2.phylum if r2 else ""])
+                row.extend([phylum_map.get(m1, ""), phylum_map.get(m2, "")])
             w.writerow(row)
 
 
 def _write_topology_csv(topo: NetworkTopology, path: Path, taxonomy: TaxonomyTable | None) -> None:
+    # Build taxonomy lookup once
+    tax_map: dict[str, tuple[str, str, str]] = {}
+    if taxonomy:
+        for m in topo.mag_ids:
+            rec = taxonomy.get(m)
+            tax_map[m] = (
+                rec.phylum if rec else "",
+                rec.rank("class") if rec else "",
+                rec.genus if rec else "",
+            )
+
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         header = ["MAG_ID"]
@@ -116,12 +173,7 @@ def _write_topology_csv(topo: NetworkTopology, path: Path, taxonomy: TaxonomyTab
         for i, m in enumerate(topo.mag_ids):
             row = [m]
             if taxonomy:
-                rec = taxonomy.get(m)
-                row.extend([
-                    rec.phylum if rec else "",
-                    rec.rank("class") if rec else "",
-                    rec.genus if rec else "",
-                ])
+                row.extend(tax_map[m])
             row.extend([
                 int(topo.degree[i]),
                 f"{topo.betweenness[i]:.6f}",
@@ -133,6 +185,17 @@ def _write_topology_csv(topo: NetworkTopology, path: Path, taxonomy: TaxonomyTab
 
 
 def _write_keystones_csv(ks: KeystoneTaxaResult, path: Path, taxonomy: TaxonomyTable | None) -> None:
+    # Build taxonomy lookup once
+    tax_map: dict[str, tuple[str, str, str]] = {}
+    if taxonomy:
+        for m in ks.mag_ids:
+            rec = taxonomy.get(m)
+            tax_map[m] = (
+                rec.phylum if rec else "",
+                rec.rank("class") if rec else "",
+                rec.genus if rec else "",
+            )
+
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         header = ["MAG_ID"]
@@ -146,12 +209,7 @@ def _write_keystones_csv(ks: KeystoneTaxaResult, path: Path, taxonomy: TaxonomyT
             m = ks.mag_ids[i]
             row = [m]
             if taxonomy:
-                rec = taxonomy.get(m)
-                row.extend([
-                    rec.phylum if rec else "",
-                    rec.rank("class") if rec else "",
-                    rec.genus if rec else "",
-                ])
+                row.extend(tax_map[m])
             row.extend([
                 f"{ks.keystone_scores[i]:.6f}",
                 "yes" if ks.is_keystone[i] else "no",
@@ -239,6 +297,13 @@ def _write_net_html(
 
     # Keystone taxa table
     if n_ks > 0:
+        # Build taxonomy lookup once for keystones
+        ks_tax: dict[str, tuple[str, str]] = {}
+        if taxonomy:
+            for m in keystones.mag_ids:
+                rec = taxonomy.get(m)
+                ks_tax[m] = (rec.phylum if rec else "", rec.genus if rec else "")
+
         html_parts.append("<div class='section'>")
         html_parts.append("<h2>Keystone Taxa</h2>")
         html_parts.append("<table><tr><th>MAG</th>")
@@ -252,9 +317,9 @@ def _write_net_html(
             m = keystones.mag_ids[i]
             html_parts.append(f"<tr><td class='keystone'>{m}</td>")
             if taxonomy:
-                rec = taxonomy.get(m)
-                html_parts.append(f"<td>{rec.phylum if rec else ''}</td>")
-                html_parts.append(f"<td>{rec.genus if rec else ''}</td>")
+                phylum, genus = ks_tax[m]
+                html_parts.append(f"<td>{phylum}</td>")
+                html_parts.append(f"<td>{genus}</td>")
             html_parts.append(
                 f"<td>{keystones.keystone_scores[i]:.4f}</td>"
                 f"<td>{keystones.metrics['betweenness'][i]:.4f}</td>"

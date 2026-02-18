@@ -4,8 +4,17 @@ import numpy as np
 import pytest
 
 from mag.io import AbundanceTable
-from mag.net_correlation import NetworkResult, build_network, proportionality
-from mag.tests.fixtures import generate_synthetic_abundance_table
+from mag.net_correlation import (
+    NetworkResult,
+    ThresholdSensitivityResult,
+    build_network,
+    proportionality,
+    threshold_sensitivity,
+)
+from mag.tests.fixtures import (
+    generate_edge_case_single_mag,
+    generate_synthetic_abundance_table,
+)
 
 
 class TestProportionality:
@@ -107,3 +116,108 @@ class TestBuildNetwork:
             assert mag_a != mag_b, f"Self-edge found: ({mag_a}, {mag_b})"
         # Also check adjacency diagonal
         np.testing.assert_array_equal(np.diag(net.adjacency), np.zeros(table.n_mags))
+
+    def test_edge_completeness(self):
+        """Every valid pair at or below threshold must appear in edges."""
+        table, _, _ = generate_synthetic_abundance_table()
+        phi = proportionality(table)
+        net = build_network(phi, table.mag_ids, threshold_percentile=10)
+        n = len(table.mag_ids)
+        edge_set = {(a, b) for a, b, _ in net.edges}
+        for i in range(n):
+            for j in range(i + 1, n):
+                v = phi[i, j]
+                pair = (table.mag_ids[i], table.mag_ids[j])
+                if not np.isnan(v) and v <= net.threshold:
+                    assert pair in edge_set, (
+                        f"Pair {pair} with phi={v:.6f} <= threshold "
+                        f"{net.threshold:.6f} missing from edges"
+                    )
+                else:
+                    assert pair not in edge_set
+
+    def test_adjacency_symmetric(self):
+        """Adjacency matrix must be symmetric."""
+        table, _, _ = generate_synthetic_abundance_table()
+        phi = proportionality(table)
+        net = build_network(phi, table.mag_ids)
+        np.testing.assert_array_equal(net.adjacency, net.adjacency.T)
+
+
+class TestProportionalityExactValues:
+    """Verify vectorized phi matches hand-computed var(log(x_i/x_j), ddof=1)."""
+
+    def test_exact_phi_3x4(self):
+        """3 MAGs x 4 samples — compare vectorized vs loop-based phi."""
+        abundances = np.array([
+            [10.0, 20.0, 30.0, 40.0],
+            [20.0, 40.0, 60.0, 80.0],
+            [5.0, 100.0, 3.0, 50.0],
+        ])
+        table = AbundanceTable(
+            mag_ids=["A", "B", "C"],
+            sample_ids=["s0", "s1", "s2", "s3"],
+            abundances=abundances,
+        )
+        result = proportionality(table, pseudocount=1.0)
+
+        # Hand-compute expected phi: var(log((x_i+1)/(x_j+1)), ddof=1)
+        log_x = np.log(abundances + 1.0)
+        for i in range(3):
+            for j in range(3):
+                if i == j:
+                    assert result[i, j] == 0.0
+                else:
+                    expected = float(np.var(log_x[i] - log_x[j], ddof=1))
+                    np.testing.assert_allclose(
+                        result[i, j], expected, rtol=1e-10,
+                        err_msg=f"phi[{i},{j}] mismatch",
+                    )
+
+    def test_single_mag(self):
+        """Single MAG should produce 1x1 matrix with phi=0."""
+        table = generate_edge_case_single_mag()
+        result = proportionality(table)
+        assert result.shape == (1, 1)
+        assert result[0, 0] == 0.0
+
+    def test_phi_nonnegative(self):
+        """Phi (variance of log-ratios) must be >= 0 for all valid entries."""
+        table, _, _ = generate_synthetic_abundance_table()
+        result = proportionality(table)
+        valid = ~np.isnan(result)
+        assert np.all(result[valid] >= -1e-15), (
+            f"Negative phi found: min={result[valid].min()}"
+        )
+
+
+class TestThresholdSensitivity:
+    def test_sensitivity_returns_result(self):
+        table, _, _ = generate_synthetic_abundance_table()
+        phi = proportionality(table)
+        result = threshold_sensitivity(phi, table.mag_ids)
+        assert isinstance(result, ThresholdSensitivityResult)
+        assert len(result.percentiles) == 20  # default 1..20
+        assert result.thresholds.shape == result.percentiles.shape
+        assert result.n_edges.shape == result.percentiles.shape
+        assert result.modularities.shape == result.percentiles.shape
+        assert result.n_modules.shape == result.percentiles.shape
+
+    def test_sensitivity_monotonic_edges(self):
+        """More permissive threshold (higher percentile) -> more or equal edges."""
+        table, _, _ = generate_synthetic_abundance_table()
+        phi = proportionality(table)
+        result = threshold_sensitivity(phi, table.mag_ids)
+        for i in range(1, len(result.n_edges)):
+            assert result.n_edges[i] >= result.n_edges[i - 1], (
+                f"Edge count decreased at percentile {result.percentiles[i]}: "
+                f"{result.n_edges[i]} < {result.n_edges[i - 1]}"
+            )
+
+    def test_sensitivity_custom_percentiles(self):
+        table, _, _ = generate_synthetic_abundance_table()
+        phi = proportionality(table)
+        percs = np.array([5.0, 10.0, 15.0])
+        result = threshold_sensitivity(phi, table.mag_ids, percentiles=percs)
+        assert len(result.percentiles) == 3
+        np.testing.assert_array_equal(result.percentiles, percs)

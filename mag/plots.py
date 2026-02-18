@@ -14,7 +14,7 @@ from scipy import stats as sp_stats
 
 from .compartment_specificity import CompartmentSpecificityResult
 from .differential import DifferentialAbundanceResult
-from .diversity import AlphaDiversityResult
+from .diversity import AlphaDiversityResult, RarefactionResult
 from .indicator import IndicatorSpeciesResult
 from .io import AbundanceTable, SampleMetadata, TaxonomyTable
 from .ordination import OrdinationResult
@@ -569,6 +569,10 @@ def plot_cazyme_bars(
     """Stacked bar chart of CAZyme classes per group."""
     from .func_profile import pathway_abundance as _pathway_abundance
 
+    import re
+
+    _cazy_prefix_re = re.compile(r'^([A-Za-z]+)')
+
     _setup_style()
     groups = metadata.get_groups(grouping_var)
     group_names = sorted(groups.keys())
@@ -576,23 +580,24 @@ def plot_cazyme_bars(
     # Get CAZyme abundance per sample
     cazy_abund = _pathway_abundance(cazy_table, abundance)
 
+    # Pre-cache sample index lookups
+    sid_to_idx = {s: i for i, s in enumerate(cazy_abund.sample_ids)}
+    group_indices: dict[str, np.ndarray] = {}
+    for g in group_names:
+        group_indices[g] = np.array(
+            [sid_to_idx[s] for s in groups[g] if s in sid_to_idx], dtype=np.intp
+        )
+
     # Aggregate by class prefix per group
     class_totals: dict[str, dict[str, float]] = {}
     for fi, fam_id in enumerate(cazy_abund.mag_ids):
-        prefix = ""
-        for ch in fam_id:
-            if ch.isalpha():
-                prefix += ch
-            else:
-                break
-        if not prefix:
-            prefix = "Other"
+        match = _cazy_prefix_re.match(fam_id)
+        prefix = match.group(1) if match else "Other"
         if prefix not in class_totals:
             class_totals[prefix] = {g: 0.0 for g in group_names}
         for g in group_names:
-            g_samples = groups[g]
-            g_idx = [cazy_abund.sample_ids.index(s) for s in g_samples if s in set(cazy_abund.sample_ids)]
-            if g_idx:
+            g_idx = group_indices[g]
+            if len(g_idx) > 0:
                 class_totals[prefix][g] += float(cazy_abund.abundances[fi, g_idx].mean())
 
     classes = sorted(class_totals.keys())
@@ -641,18 +646,15 @@ def plot_network_graph(
 
     # Color by phylum
     if taxonomy:
-        phyla = set()
+        # Build phylum lookup once
+        phylum_map = {}
         for m in network.mag_ids:
             rec = taxonomy.get(m)
-            phyla.add(rec.phylum if rec else "Unknown")
-        phyla_list = sorted(phyla)
+            phylum_map[m] = rec.phylum if rec else "Unknown"
+        phyla_list = sorted(set(phylum_map.values()))
         phyla_colors = {p: PALETTE[i % len(PALETTE)] for i, p in enumerate(phyla_list)}
 
-        node_colors = []
-        for m in G.nodes():
-            rec = taxonomy.get(m)
-            p = rec.phylum if rec else "Unknown"
-            node_colors.append(phyla_colors[p])
+        node_colors = [phyla_colors[phylum_map.get(m, "Unknown")] for m in G.nodes()]
     else:
         node_colors = [PALETTE[0]] * len(G.nodes())
 
@@ -666,12 +668,9 @@ def plot_network_graph(
     ax.axis("off")
 
     if taxonomy:
-        # Legend for top phyla
+        # Legend for top phyla (using cached phylum_map)
         from matplotlib.lines import Line2D
-        phyla_in_net = set()
-        for m in G.nodes():
-            rec = taxonomy.get(m)
-            phyla_in_net.add(rec.phylum if rec else "Unknown")
+        phyla_in_net = set(phylum_map[m] for m in G.nodes() if m in phylum_map)
         legend_elements = [
             Line2D([0], [0], marker="o", color="w", markerfacecolor=phyla_colors[p], markersize=8, label=p)
             for p in sorted(phyla_in_net)[:10]
@@ -701,4 +700,59 @@ def plot_degree_distribution(
         ax.axvline(np.mean(degrees), color="red", linestyle="--", label=f"Mean={np.mean(degrees):.1f}")
         ax.legend()
     fig.savefig(str(output), bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_rarefaction(
+    result: RarefactionResult,
+    metric: str = "richness",
+    output: str | Path | None = None,
+) -> None:
+    """Plot rarefaction curves with +/- 1 SD shading.
+
+    Parameters
+    ----------
+    result : RarefactionResult
+        Output of :func:`~mag.diversity.rarefaction_curves`.
+    metric : str
+        ``"richness"`` or ``"shannon"``.
+    output : str, Path, or None
+        File path to save the figure.  If None, the figure is displayed.
+    """
+    _setup_style()
+
+    if metric == "shannon":
+        mean_vals = result.shannon
+        sd_vals = result.shannon_sd
+        ylabel = "Shannon Diversity"
+    else:
+        mean_vals = result.richness
+        sd_vals = result.richness_sd
+        ylabel = "Observed Richness"
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    depths = result.depths
+
+    for j, sid in enumerate(result.sample_ids):
+        y = mean_vals[:, j]
+        sd = sd_vals[:, j]
+        valid = ~np.isnan(y)
+        color = PALETTE[j % len(PALETTE)]
+        ax.plot(depths[valid], y[valid], label=sid, color=color, linewidth=1.2)
+        ax.fill_between(
+            depths[valid],
+            (y - sd)[valid],
+            (y + sd)[valid],
+            color=color,
+            alpha=0.15,
+        )
+
+    ax.set_xlabel("Sequencing Depth")
+    ax.set_ylabel(ylabel)
+    ax.set_title(f"Rarefaction Curves ({ylabel})")
+    if len(result.sample_ids) <= 12:
+        ax.legend(fontsize=7, loc="lower right")
+    fig.tight_layout()
+    if output is not None:
+        fig.savefig(str(output), bbox_inches="tight")
     plt.close(fig)

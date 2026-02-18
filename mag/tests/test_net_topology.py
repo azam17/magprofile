@@ -8,9 +8,11 @@ from mag.net_correlation import NetworkResult
 from mag.net_topology import (
     KeystoneTaxaResult,
     NetworkTopology,
+    NullModelResult,
     compute_topology,
     differential_network,
     identify_keystones,
+    network_null_model,
 )
 
 
@@ -200,3 +202,60 @@ class TestDifferentialNetwork:
         assert len(result["conserved"]) == 1
         assert len(result["lost"]) == 1
         assert len(result["gained"]) == 1
+
+
+class TestNetworkNullModel:
+    def test_null_model_returns_result(self, star_network):
+        result = network_null_model(star_network, n_iterations=50, seed=42)
+        assert isinstance(result, NullModelResult)
+        assert isinstance(result.observed_modularity, float)
+        assert result.null_modularities.shape == (50,)
+        assert 0.0 <= result.p_value <= 1.0
+        assert np.isfinite(result.z_score)
+
+    def test_null_model_empty_network(self, empty_network):
+        result = network_null_model(empty_network, n_iterations=10)
+        assert result.observed_modularity == 0.0
+        assert result.z_score == 0.0
+        assert result.p_value == 1.0
+
+    def test_null_model_z_score_sign(self):
+        """A well-structured clustered network should have positive z-score."""
+        # Two clusters of 8 nodes each, densely connected within,
+        # with only 2 bridge edges between clusters.
+        cluster_a = [f"A{i}" for i in range(8)]
+        cluster_b = [f"B{i}" for i in range(8)]
+        mag_ids = cluster_a + cluster_b
+        n = len(mag_ids)
+        adjacency = np.zeros((n, n), dtype=np.float64)
+        edges = []
+        idx = {m: i for i, m in enumerate(mag_ids)}
+        # Within-cluster edges (all pairs within each cluster)
+        for cluster in [cluster_a, cluster_b]:
+            for i in range(len(cluster)):
+                for j in range(i + 1, len(cluster)):
+                    edges.append((cluster[i], cluster[j], 0.1))
+                    adjacency[idx[cluster[i]], idx[cluster[j]]] = 1.0
+                    adjacency[idx[cluster[j]], idx[cluster[i]]] = 1.0
+        # 2 bridge edges
+        edges.append(("A0", "B0", 0.5))
+        adjacency[idx["A0"], idx["B0"]] = 1.0
+        adjacency[idx["B0"], idx["A0"]] = 1.0
+        edges.append(("A1", "B1", 0.5))
+        adjacency[idx["A1"], idx["B1"]] = 1.0
+        adjacency[idx["B1"], idx["A1"]] = 1.0
+
+        net = NetworkResult(
+            mag_ids=mag_ids, adjacency=adjacency, edges=edges, threshold=0.6,
+        )
+        result = network_null_model(net, n_iterations=200, seed=42)
+        assert result.z_score > 0, (
+            f"Clustered network should have positive z-score, got {result.z_score}"
+        )
+
+    def test_null_model_deterministic(self, star_network):
+        r1 = network_null_model(star_network, n_iterations=50, seed=99)
+        r2 = network_null_model(star_network, n_iterations=50, seed=99)
+        np.testing.assert_array_equal(r1.null_modularities, r2.null_modularities)
+        assert r1.z_score == r2.z_score
+        assert r1.p_value == r2.p_value

@@ -5,7 +5,16 @@ import pytest
 
 from mag.beta import bray_curtis
 from mag.io import AbundanceTable, SampleMetadata
-from mag.stats import anosim, kruskal_wallis_per_mag, pairwise_permanova, permanova, permdisp
+from mag.stats import (
+    VariancePartitionResult,
+    anosim,
+    kruskal_wallis_per_mag,
+    pairwise_permanova,
+    permanova,
+    permdisp,
+    variance_partition,
+)
+from scipy.spatial.distance import pdist, squareform
 from mag.tests.fixtures import generate_synthetic_abundance_table
 
 
@@ -141,3 +150,79 @@ class TestPairwisePERMANOVA:
         bc = bray_curtis(table)
         results = pairwise_permanova(bc, meta, "group", n_permutations=9, seed=42)
         assert len(results) == 1
+
+
+def _make_vp_data(
+    groups_a: list[str],
+    groups_b: list[str],
+    seed: int = 42,
+    effect_a: float = 10.0,
+    effect_b: float = 1.0,
+) -> tuple[np.ndarray, list[str], SampleMetadata]:
+    """Create a distance matrix with two grouping variables."""
+    rng = np.random.default_rng(seed)
+    n = len(groups_a)
+    sample_ids = [f"s{i}" for i in range(n)]
+    coords = rng.normal(size=(n, 5))
+    # Use stable offsets: enumerate unique groups, assign sequential offsets
+    unique_a = sorted(set(groups_a))
+    unique_b = sorted(set(groups_b))
+    offset_a = {g: k * effect_a for k, g in enumerate(unique_a)}
+    offset_b = {g: k * effect_b for k, g in enumerate(unique_b)}
+    for i in range(n):
+        coords[i, 0] += offset_a[groups_a[i]]
+        coords[i, 1] += offset_b[groups_b[i]]
+    dm = squareform(pdist(coords, metric="euclidean"))
+    records = {sid: {"var_a": groups_a[i], "var_b": groups_b[i]}
+               for i, sid in enumerate(sample_ids)}
+    return dm, sample_ids, SampleMetadata(records=records)
+
+
+class TestVariancePartition:
+    def test_fractions_sum_to_approximately_one(self):
+        """Pure + shared + residual should sum close to 1.0.
+
+        Exact equality is not guaranteed because pure fractions are clamped
+        to >= 0, which can make the total slightly exceed 1.0 when
+        individual R^2 values exceed the combined R^2 (suppression).
+        """
+        groups_a = ["X", "X", "X", "Y", "Y", "Y", "Z", "Z", "Z"]
+        groups_b = ["P", "Q", "P", "Q", "P", "Q", "P", "Q", "P"]
+        dm, sids, meta = _make_vp_data(groups_a, groups_b)
+        result = variance_partition(dm, sids, meta, ["var_a", "var_b"])
+        total = (
+            sum(result.pure_fractions.values())
+            + result.shared_fraction
+            + result.residual_fraction
+        )
+        assert total == pytest.approx(1.0, abs=0.05)
+
+    def test_known_effect(self):
+        groups_a = ["X", "X", "X", "X", "Y", "Y", "Y", "Y"]
+        groups_b = ["P", "Q", "P", "Q", "P", "Q", "P", "Q"]
+        dm, sids, meta = _make_vp_data(groups_a, groups_b, seed=123)
+        result = variance_partition(dm, sids, meta, ["var_a", "var_b"])
+        assert isinstance(result, VariancePartitionResult)
+        assert result.pure_fractions["var_a"] > result.pure_fractions["var_b"]
+
+    def test_single_variable(self):
+        groups_a = ["X", "X", "X", "Y", "Y", "Y"]
+        groups_b = ["P", "Q", "P", "Q", "P", "Q"]
+        dm, sids, meta = _make_vp_data(groups_a, groups_b)
+        result = variance_partition(dm, sids, meta, ["var_a"])
+        assert result.shared_fraction == 0.0
+        assert result.pure_fractions["var_a"] == pytest.approx(
+            result.full_r_squared, abs=1e-10
+        )
+        total = result.pure_fractions["var_a"] + result.residual_fraction
+        assert total == pytest.approx(1.0, abs=1e-10)
+
+    def test_all_fractions_nonnegative(self):
+        groups_a = ["X", "X", "Y", "Y", "Z", "Z"]
+        groups_b = ["P", "Q", "P", "Q", "P", "Q"]
+        dm, sids, meta = _make_vp_data(groups_a, groups_b)
+        result = variance_partition(dm, sids, meta, ["var_a", "var_b"])
+        for frac in result.pure_fractions.values():
+            assert frac >= 0.0
+        assert result.shared_fraction >= 0.0
+        assert result.residual_fraction >= 0.0

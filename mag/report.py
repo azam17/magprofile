@@ -51,6 +51,11 @@ def generate_report(
     _write_alpha_csv(alpha, out / "alpha_diversity.csv")
     plots.plot_alpha_diversity(alpha, metadata, grouping_var, out / "alpha_diversity.pdf")
 
+    # Rarefaction curves
+    rarefaction = div_mod.rarefaction_curves(abundance)
+    plots.plot_rarefaction(rarefaction, metric="richness", output=out / "rarefaction_richness.pdf")
+    plots.plot_rarefaction(rarefaction, metric="shannon", output=out / "rarefaction_shannon.pdf")
+
     # Beta diversity
     bc = beta_mod.bray_curtis(abundance)
     jc = beta_mod.jaccard(abundance)
@@ -83,6 +88,17 @@ def generate_report(
         bc, metadata, grouping_var, n_permutations=n_permutations
     )
     _write_pairwise_permanova(pw_results, out / "pairwise_permanova.csv")
+
+    # Variance partitioning (requires >= 2 metadata variables)
+    all_vars = set()
+    for rec in metadata.records.values():
+        all_vars.update(rec.keys())
+    grouping_vars = sorted(all_vars - {"replicate"})
+    if len(grouping_vars) >= 2:
+        vp = stats_mod.variance_partition(
+            bc.distance_matrix, bc.sample_ids, metadata, grouping_vars[:2],
+        )
+        _write_variance_partition_csv(vp, out / "variance_partition.csv")
 
     # Differential abundance — all pairwise comparisons
     groups = metadata.get_groups(grouping_var)
@@ -206,6 +222,19 @@ def generate_report(
         "phylum_composition": phylum_composition,
     }
     generate_html_report(str(out), report_data)
+
+
+def _write_variance_partition_csv(
+    vp: stats_mod.VariancePartitionResult, path: Path,
+) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["component", "fraction"])
+        for var in vp.variables:
+            w.writerow([f"pure_{var}", f"{vp.pure_fractions[var]:.6f}"])
+        w.writerow(["shared", f"{vp.shared_fraction:.6f}"])
+        w.writerow(["residual", f"{vp.residual_fraction:.6f}"])
+        w.writerow(["full_R2", f"{vp.full_r_squared:.6f}"])
 
 
 def _write_alpha_csv(result, path: Path) -> None:

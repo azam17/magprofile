@@ -22,6 +22,17 @@ class StatisticalTestResult:
     metadata: dict[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class VariancePartitionResult:
+    """Result of variance partitioning across environmental variables."""
+
+    variables: list[str]
+    pure_fractions: dict[str, float]  # R^2 unique to each variable
+    shared_fraction: float            # R^2 shared between variables
+    residual_fraction: float          # 1 - R^2_full
+    full_r_squared: float
+
+
 def permanova(
     beta: BetaDiversityResult,
     sample_metadata: SampleMetadata,
@@ -384,3 +395,118 @@ def _bh_fdr(p_values: np.ndarray) -> np.ndarray:
     result = np.zeros(n)
     result[sorted_idx] = q
     return result
+
+
+def _compute_r_squared(
+    dm: np.ndarray,
+    labels: np.ndarray,
+) -> float:
+    """Compute R^2 = 1 - SS_within / SS_total from a distance matrix and labels."""
+    n = dm.shape[0]
+    unique_groups = np.unique(labels)
+
+    # SS_total = sum of squared distances / n
+    ss_total = 0.0
+    for i in range(n):
+        for j in range(i + 1, n):
+            ss_total += dm[i, j] ** 2
+    ss_total /= n
+
+    if ss_total == 0:
+        return 0.0
+
+    # SS_within = sum per group of (within-group squared distances / group_size)
+    ss_within = 0.0
+    for grp in unique_groups:
+        idx = np.where(labels == grp)[0]
+        ng = len(idx)
+        if ng > 1:
+            grp_ss = sum(
+                dm[idx[a], idx[b]] ** 2
+                for a in range(len(idx))
+                for b in range(a + 1, len(idx))
+            )
+            ss_within += grp_ss / ng
+
+    return 1.0 - ss_within / ss_total
+
+
+def variance_partition(
+    distance_matrix: np.ndarray,
+    sample_ids: list[str],
+    metadata: SampleMetadata,
+    variables: list[str],
+) -> VariancePartitionResult:
+    """Partition variance in a distance matrix across environmental variables.
+
+    For each variable, computes the unique (pure) fraction of R^2 explained,
+    plus the shared fraction explained by multiple variables jointly.
+
+    Parameters
+    ----------
+    distance_matrix : np.ndarray
+        Pairwise distance matrix (n_samples x n_samples).
+    sample_ids : list[str]
+        Sample identifiers matching matrix rows/columns.
+    metadata : SampleMetadata
+        Sample metadata containing the grouping variables.
+    variables : list[str]
+        Metadata variable names to partition variance across.
+
+    Returns
+    -------
+    VariancePartitionResult
+        Pure, shared, and residual variance fractions.
+    """
+    n = len(sample_ids)
+
+    # Build label arrays for each variable
+    var_labels: dict[str, np.ndarray] = {}
+    for var in variables:
+        labels = np.array([
+            metadata.records.get(s, {}).get(var, "")
+            for s in sample_ids
+        ])
+        var_labels[var] = labels
+
+    # R^2 for each variable alone
+    r2_individual: dict[str, float] = {}
+    for var in variables:
+        r2_individual[var] = _compute_r_squared(distance_matrix, var_labels[var])
+
+    # R^2 for all variables combined (interaction labels)
+    combined_labels = np.array([
+        "|".join(metadata.records.get(s, {}).get(v, "") for v in variables)
+        for s in sample_ids
+    ])
+    r2_full = _compute_r_squared(distance_matrix, combined_labels)
+
+    # Pure fractions: R^2_full - R^2_without_var_i
+    pure_fractions: dict[str, float] = {}
+    if len(variables) == 1:
+        pure_fractions[variables[0]] = r2_full
+        shared_fraction = 0.0
+    else:
+        for var in variables:
+            others = [v for v in variables if v != var]
+            if len(others) == 1:
+                r2_without = _compute_r_squared(distance_matrix, var_labels[others[0]])
+            else:
+                other_labels = np.array([
+                    "|".join(metadata.records.get(s, {}).get(v, "") for v in others)
+                    for s in sample_ids
+                ])
+                r2_without = _compute_r_squared(distance_matrix, other_labels)
+            pure_fractions[var] = max(0.0, r2_full - r2_without)
+
+        shared_fraction = max(0.0, r2_full - sum(pure_fractions.values()))
+
+    residual_fraction = 1.0 - r2_full
+
+    return VariancePartitionResult(
+        variables=list(variables),
+        pure_fractions=pure_fractions,
+        shared_fraction=shared_fraction,
+        residual_fraction=residual_fraction,
+        full_r_squared=r2_full,
+    )

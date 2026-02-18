@@ -17,6 +17,16 @@ from .net_correlation import NetworkResult
 
 
 @dataclass(frozen=True)
+class NullModelResult:
+    """Result of network null model analysis (degree-preserving rewiring)."""
+
+    observed_modularity: float
+    null_modularities: np.ndarray  # shape (n_iterations,)
+    z_score: float
+    p_value: float  # fraction of null >= observed
+
+
+@dataclass(frozen=True)
 class NetworkTopology:
     """Graph-theoretic properties of a co-occurrence network."""
 
@@ -76,17 +86,19 @@ def compute_topology(network: NetworkResult) -> NetworkTopology:
             hub_scores=np.zeros(n, dtype=np.float64),
         )
 
-    # Degree centrality
+    # Compute all centrality dicts
     degree_dict = nx.degree_centrality(G)
-    degree = np.array([degree_dict[m] for m in mag_ids])
-
-    # Betweenness centrality
     betweenness_dict = nx.betweenness_centrality(G)
-    betweenness = np.array([betweenness_dict[m] for m in mag_ids])
-
-    # Closeness centrality
     closeness_dict = nx.closeness_centrality(G)
-    closeness = np.array([closeness_dict[m] for m in mag_ids])
+
+    # Single pass to build all arrays
+    degree = np.empty(n, dtype=np.float64)
+    betweenness = np.empty(n, dtype=np.float64)
+    closeness = np.empty(n, dtype=np.float64)
+    for i, m in enumerate(mag_ids):
+        degree[i] = degree_dict.get(m, 0.0)
+        betweenness[i] = betweenness_dict.get(m, 0.0)
+        closeness[i] = closeness_dict.get(m, 0.0)
 
     # Community detection (greedy modularity)
     communities = list(nx.community.greedy_modularity_communities(G))
@@ -243,3 +255,79 @@ def differential_network(
         "gained": gained,
         "lost": lost,
     }
+
+
+def network_null_model(
+    network: NetworkResult,
+    n_iterations: int = 1000,
+    seed: int = 42,
+) -> NullModelResult:
+    """Test whether observed modularity exceeds a degree-preserving null model.
+
+    Uses double-edge-swap rewiring to generate random graphs that preserve
+    the degree sequence, then compares observed modularity against the null
+    distribution.
+
+    Parameters
+    ----------
+    network : NetworkResult
+        Network from :func:`~mag.net_correlation.build_network`.
+    n_iterations : int
+        Number of null-model randomisations.
+    seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    NullModelResult
+        Observed modularity, null distribution, z-score, and p-value.
+    """
+    G = nx.Graph()
+    G.add_nodes_from(network.mag_ids)
+    for mag_i, mag_j, weight in network.edges:
+        G.add_edge(mag_i, mag_j, weight=weight)
+
+    n_edges = G.number_of_edges()
+
+    # Empty network: nothing to test
+    if n_edges == 0:
+        return NullModelResult(
+            observed_modularity=0.0,
+            null_modularities=np.zeros(n_iterations),
+            z_score=0.0,
+            p_value=1.0,
+        )
+
+    # Observed modularity
+    communities = list(nx.community.greedy_modularity_communities(G))
+    observed_mod = nx.community.modularity(G, communities)
+
+    # Null distribution via degree-preserving rewiring
+    rng = np.random.default_rng(seed)
+    null_mods = np.empty(n_iterations)
+    for i in range(n_iterations):
+        G_copy = G.copy()
+        try:
+            nx.double_edge_swap(
+                G_copy,
+                nswap=n_edges,
+                max_tries=n_edges * 10,
+                seed=int(rng.integers(0, 2**31)),
+            )
+        except nx.NetworkXAlgorithmError:
+            pass  # keep partially-rewired graph
+        comms = list(nx.community.greedy_modularity_communities(G_copy))
+        null_mods[i] = nx.community.modularity(G_copy, comms)
+
+    # Statistics
+    null_mean = null_mods.mean()
+    null_std = null_mods.std()
+    z_score = (observed_mod - null_mean) / null_std if null_std > 0 else 0.0
+    p_value = (np.sum(null_mods >= observed_mod) + 1) / (n_iterations + 1)
+
+    return NullModelResult(
+        observed_modularity=observed_mod,
+        null_modularities=null_mods,
+        z_score=z_score,
+        p_value=p_value,
+    )
