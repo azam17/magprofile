@@ -166,8 +166,10 @@ def func_report(abundance: str, dram_annotations: str, taxonomy: str | None, met
 @click.option("--phi-threshold", default=None, type=float, help="Absolute phi threshold (required for threshold-mode=fixed; optional override for global)")
 @click.option("--min-prevalence", default=0.5, type=float, help="Min prevalence for global network (default 0.5)")
 @click.option("--group-min-prevalence", default=None, type=float, help="Min prevalence for group networks (default: same as --min-prevalence)")
+@click.option("--null-iterations", default=1000, type=int, show_default=True, help="Null-model randomizations")
+@click.option("--null-jobs", default=1, type=int, show_default=True, help="Worker processes for null-model simulation")
 @click.option("--output", "-o", default="net_results", help="Output directory")
-def net_report(abundance: str, taxonomy: str | None, metadata: str, group: str, threshold: float, threshold_mode: str, phi_threshold: float | None, min_prevalence: float, group_min_prevalence: float | None, output: str) -> None:
+def net_report(abundance: str, taxonomy: str | None, metadata: str, group: str, threshold: float, threshold_mode: str, phi_threshold: float | None, min_prevalence: float, group_min_prevalence: float | None, null_iterations: int, null_jobs: int, output: str) -> None:
     """Run network analysis pipeline (magnet)."""
     from .net_report import generate_net_report
 
@@ -186,5 +188,7 @@ def net_report(abundance: str, taxonomy: str | None, metadata: str, group: str, 
         threshold_mode=threshold_mode,
         phi_threshold=phi_threshold,
         group_min_prevalence=group_min_prevalence,
+        null_iterations=null_iterations,
+        null_jobs=null_jobs,
     )
     click.echo(f"Network analysis report written to {output}/")

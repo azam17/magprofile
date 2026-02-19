@@ -47,6 +47,8 @@ def generate_net_report(
     threshold_mode: str = "global",
     phi_threshold: float | None = None,
     group_min_prevalence: float | None = None,
+    null_iterations: int = 1000,
+    null_jobs: int = 1,
 ) -> None:
     """Run network analysis pipeline and write results."""
     out = Path(output_dir)
@@ -72,7 +74,7 @@ def generate_net_report(
     _write_keystones_csv(keystones, out / "keystone_taxa.csv", taxonomy)
 
     # Null model test for modularity
-    null_model = network_null_model(global_net)
+    null_model = network_null_model(global_net, n_iterations=int(null_iterations), n_jobs=int(null_jobs))
     _write_null_model_csv(null_model, out / "null_model.csv")
 
     # Threshold sensitivity analysis

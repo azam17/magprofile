@@ -8,6 +8,7 @@ keystone taxa as high-centrality, low-abundance MAGs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ProcessPoolExecutor
 
 import networkx as nx
 import numpy as np
@@ -440,10 +441,37 @@ def hub_bridge_classification(
     )
 
 
+def _null_modularity_worker(
+    nodes: list[str],
+    edges: list[tuple[str, str, float]],
+    nswap: int,
+    worker_seed: int,
+) -> float:
+    """Single null-model modularity simulation worker."""
+    G = nx.Graph()
+    G.add_nodes_from(nodes)
+    for mag_i, mag_j, weight in edges:
+        G.add_edge(mag_i, mag_j, weight=weight)
+
+    try:
+        nx.double_edge_swap(
+            G,
+            nswap=nswap,
+            max_tries=max(nswap * 10, 1),
+            seed=int(worker_seed),
+        )
+    except nx.NetworkXAlgorithmError:
+        pass
+
+    comms = list(nx.community.greedy_modularity_communities(G))
+    return float(nx.community.modularity(G, comms))
+
+
 def network_null_model(
     network: NetworkResult,
     n_iterations: int = 1000,
     seed: int = 42,
+    n_jobs: int = 1,
 ) -> NullModelResult:
     """Test whether observed modularity exceeds a degree-preserving null model.
 
@@ -459,6 +487,9 @@ def network_null_model(
         Number of null-model randomisations.
     seed : int
         Random seed for reproducibility.
+    n_jobs : int
+        Number of worker processes for parallel null simulations.
+        Use >1 to utilize multiple CPU cores.
 
     Returns
     -------
@@ -487,20 +518,28 @@ def network_null_model(
 
     # Null distribution via degree-preserving rewiring
     rng = np.random.default_rng(seed)
-    null_mods = np.empty(n_iterations)
-    for i in range(n_iterations):
-        G_copy = G.copy()
-        try:
-            nx.double_edge_swap(
-                G_copy,
-                nswap=n_edges,
-                max_tries=n_edges * 10,
-                seed=int(rng.integers(0, 2**31)),
+    seeds = [int(rng.integers(0, 2**31)) for _ in range(n_iterations)]
+
+    if n_jobs <= 1:
+        null_mods = np.empty(n_iterations)
+        for i, worker_seed in enumerate(seeds):
+            null_mods[i] = _null_modularity_worker(
+                list(network.mag_ids),
+                list(network.edges),
+                n_edges,
+                worker_seed,
             )
-        except nx.NetworkXAlgorithmError:
-            pass  # keep partially-rewired graph
-        comms = list(nx.community.greedy_modularity_communities(G_copy))
-        null_mods[i] = nx.community.modularity(G_copy, comms)
+    else:
+        max_workers = max(1, min(int(n_jobs), n_iterations))
+        with ProcessPoolExecutor(max_workers=max_workers) as ex:
+            vals = ex.map(
+                _null_modularity_worker,
+                [list(network.mag_ids)] * n_iterations,
+                [list(network.edges)] * n_iterations,
+                [n_edges] * n_iterations,
+                seeds,
+            )
+            null_mods = np.fromiter(vals, dtype=float, count=n_iterations)
 
     # Statistics
     null_mean = null_mods.mean()
