@@ -1,5 +1,6 @@
 ================================================================================
 MAG PROFILING v0.43 ADVANCED ANALYSIS REPORT
+Oil Palm Microbiome
 Dataset: HQ567 MAGs | 30 samples | 3 grouping variables
 Generated: 2026-02-19
 ================================================================================
@@ -405,7 +406,7 @@ SECTION 6: MYXOCOCCOTA -- THE SOIL'S PREDATORS
 Myxococcota are predatory bacteria that hunt and kill other bacteria.
 They swarm toward prey, secrete lytic enzymes and antibiotics to break
 open prey cells, and consume the released nutrients. They are the wolves
-of the soil microbiome.
+of the oil palm soil microbiome.
 
 Key facts:
   - Comprise >60% of all bacterial predators in soil
@@ -922,7 +923,7 @@ SECTION 11: THREE-PILLAR INTEGRATION (ECOLOGY + FUNCTION + NETWORK)
     - Keystone taxa (Terracidiphilus) bridge modules
     - Even under disease (denser network), modular structure persists
 
-  Together: The soil microbiome maintains a resilient functional toolkit
+  Together: The oil palm microbiome maintains a resilient functional toolkit
   through (1) high taxonomic diversity with even abundances, (2) broad
   generalist distributions ensuring presence everywhere, (3) functional
   redundancy where multiple MAGs carry each function, and (4) modular
