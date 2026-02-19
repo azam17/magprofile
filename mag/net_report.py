@@ -40,14 +40,25 @@ def generate_net_report(
     output_dir: str | Path,
     threshold_percentile: float = 5,
     min_prevalence: float = 0.5,
+    threshold_mode: str = "global",
+    phi_threshold: float | None = None,
+    group_min_prevalence: float | None = None,
 ) -> None:
     """Run network analysis pipeline and write results."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    threshold_mode = str(threshold_mode).lower()
+    if threshold_mode not in {"global", "group", "fixed"}:
+        raise ValueError("threshold_mode must be one of: global, group, fixed")
+
     # Global network
     corr = proportionality(abundance, min_prevalence=min_prevalence)
     global_net = build_network(corr, abundance.mag_ids, threshold_percentile)
+    if phi_threshold is not None:
+        global_threshold = float(phi_threshold)
+    else:
+        global_threshold = float(global_net.threshold)
     _write_edges_csv(global_net, out / "network_edges.csv", taxonomy)
 
     global_topo = compute_topology(global_net)
@@ -69,15 +80,34 @@ def generate_net_report(
     group_names = sorted(groups.keys())
     group_nets: dict[str, NetworkResult] = {}
 
+    eff_group_min_prev = min_prevalence if group_min_prevalence is None else float(group_min_prevalence)
+
     for g in group_names:
         try:
             sub = abundance.subset_samples(groups[g])
-            g_corr = proportionality(sub, min_prevalence=0.0)
-            g_net = build_network(g_corr, sub.mag_ids, threshold_percentile)
+            g_corr = proportionality(sub, min_prevalence=eff_group_min_prev)
+            if threshold_mode == "group":
+                g_net = build_network(g_corr, sub.mag_ids, threshold_percentile)
+            elif threshold_mode == "fixed":
+                if phi_threshold is None:
+                    raise ValueError("phi_threshold is required when threshold_mode='fixed'")
+                g_net = _build_network_with_absolute_threshold(g_corr, sub.mag_ids, float(phi_threshold))
+            else:  # global
+                g_net = _build_network_with_absolute_threshold(g_corr, sub.mag_ids, global_threshold)
             group_nets[g] = g_net
             _write_edges_csv(g_net, out / f"network_edges_{g}.csv", taxonomy)
         except Exception as e:
             logger.warning("Network for group %s failed: %s", g, e)
+
+    _write_network_summary_csv(
+        out / "network_summary.csv",
+        global_net,
+        group_nets,
+        threshold_mode=threshold_mode,
+        threshold_percentile=threshold_percentile,
+        min_prevalence=min_prevalence,
+        group_min_prevalence=eff_group_min_prev,
+    )
 
     # Differential networks
     diff_results: dict[tuple[str, str], dict] = {}
@@ -103,6 +133,85 @@ def generate_net_report(
         diff_results=diff_results,
         taxonomy=taxonomy,
     )
+
+
+def _build_network_with_absolute_threshold(
+    corr_matrix: np.ndarray,
+    mag_ids: list[str],
+    threshold: float,
+) -> NetworkResult:
+    """Build network using a fixed absolute phi threshold."""
+    n = len(mag_ids)
+    upper_i, upper_j = np.triu_indices(n, k=1)
+    upper_vals = corr_matrix[upper_i, upper_j]
+    valid_mask = ~np.isnan(upper_vals)
+    edge_mask = valid_mask & (upper_vals <= threshold)
+    edge_indices = np.where(edge_mask)[0]
+
+    adjacency = np.zeros((n, n), dtype=np.float64)
+    ei = upper_i[edge_indices]
+    ej = upper_j[edge_indices]
+    adjacency[ei, ej] = 1.0
+    adjacency[ej, ei] = 1.0
+
+    edges: list[tuple[str, str, float]] = [
+        (mag_ids[upper_i[k]], mag_ids[upper_j[k]], float(upper_vals[k]))
+        for k in edge_indices
+    ]
+
+    return NetworkResult(
+        mag_ids=list(mag_ids),
+        adjacency=adjacency,
+        edges=edges,
+        threshold=float(threshold),
+    )
+
+
+def _write_network_summary_csv(
+    path: Path,
+    global_net: NetworkResult,
+    group_nets: dict[str, NetworkResult],
+    *,
+    threshold_mode: str,
+    threshold_percentile: float,
+    min_prevalence: float,
+    group_min_prevalence: float,
+) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "scope",
+            "group",
+            "n_mags",
+            "n_possible_edges",
+            "n_edges",
+            "density",
+            "threshold_mode",
+            "threshold_percentile",
+            "threshold_phi",
+            "min_prevalence",
+        ])
+
+        def _row(scope: str, group: str, net: NetworkResult, prev: float) -> list:
+            n = len(net.mag_ids)
+            n_possible = n * (n - 1) // 2
+            density = (len(net.edges) / n_possible) if n_possible else 0.0
+            return [
+                scope,
+                group,
+                n,
+                n_possible,
+                len(net.edges),
+                f"{density:.6f}",
+                threshold_mode,
+                f"{threshold_percentile:.2f}",
+                f"{net.threshold:.6f}",
+                f"{prev:.3f}",
+            ]
+
+        w.writerow(_row("global", "all", global_net, min_prevalence))
+        for g in sorted(group_nets.keys()):
+            w.writerow(_row("group", g, group_nets[g], group_min_prevalence))
 
 
 def _write_null_model_csv(result: NullModelResult, path: Path) -> None:
