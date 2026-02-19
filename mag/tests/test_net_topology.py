@@ -3,15 +3,19 @@
 import numpy as np
 import pytest
 
-from mag.io import AbundanceTable
+from mag.io import AbundanceTable, TaxonomyTable, TaxonomyRecord
 from mag.net_correlation import NetworkResult
 from mag.net_topology import (
+    HubBridgeResult,
     KeystoneTaxaResult,
+    ModuleCompositionResult,
     NetworkTopology,
     NullModelResult,
     compute_topology,
     differential_network,
+    hub_bridge_classification,
     identify_keystones,
+    module_composition,
     network_null_model,
 )
 
@@ -259,3 +263,94 @@ class TestNetworkNullModel:
         np.testing.assert_array_equal(r1.null_modularities, r2.null_modularities)
         assert r1.z_score == r2.z_score
         assert r1.p_value == r2.p_value
+
+
+class TestModuleComposition:
+    def test_returns_composition(self, star_network):
+        taxonomy = TaxonomyTable(records={
+            "M0": TaxonomyRecord(mag_id="M0", phylum="Proteobacteria"),
+            "M1": TaxonomyRecord(mag_id="M1", phylum="Proteobacteria"),
+            "M2": TaxonomyRecord(mag_id="M2", phylum="Actinobacteria"),
+            "M3": TaxonomyRecord(mag_id="M3", phylum="Firmicutes"),
+            "M4": TaxonomyRecord(mag_id="M4", phylum="Firmicutes"),
+        })
+        topo = compute_topology(star_network)
+        result = module_composition(topo, taxonomy)
+        assert isinstance(result, ModuleCompositionResult)
+        assert len(result.module_ids) > 0
+        # Total MAGs across modules should equal 5
+        assert sum(result.n_mags) == 5
+        # Dominant fractions in [0, 1]
+        for frac in result.dominant_fraction:
+            assert 0.0 <= frac <= 1.0
+
+    def test_empty_network(self, empty_network):
+        taxonomy = TaxonomyTable(records={
+            "M0": TaxonomyRecord(mag_id="M0", phylum="P1"),
+            "M1": TaxonomyRecord(mag_id="M1", phylum="P2"),
+            "M2": TaxonomyRecord(mag_id="M2", phylum="P3"),
+        })
+        topo = compute_topology(empty_network)
+        result = module_composition(topo, taxonomy)
+        # All 3 nodes in module 0
+        assert sum(result.n_mags) == 3
+
+
+class TestHubBridgeClassification:
+    def test_returns_result(self, star_network):
+        topo = compute_topology(star_network)
+        result = hub_bridge_classification(topo, star_network)
+        assert isinstance(result, HubBridgeResult)
+        assert len(result.mag_ids) == 5
+        assert len(result.roles) == 5
+        assert result.within_module_degree_z.shape == (5,)
+        assert result.participation_coefficient.shape == (5,)
+        # All roles should be valid
+        for role in result.roles:
+            assert role in {"hub", "bridge", "peripheral", "kinless"}
+
+    def test_participation_in_range(self, star_network):
+        topo = compute_topology(star_network)
+        result = hub_bridge_classification(topo, star_network)
+        # P must be in [0, 1]
+        assert (result.participation_coefficient >= 0).all()
+        assert (result.participation_coefficient <= 1).all()
+
+    def test_clustered_network_has_bridges(self):
+        """Two clusters connected by a single bridge node should yield bridge role."""
+        cluster_a = [f"A{i}" for i in range(5)]
+        cluster_b = [f"B{i}" for i in range(5)]
+        bridge = ["X0"]
+        mag_ids = cluster_a + bridge + cluster_b
+        n = len(mag_ids)
+        adjacency = np.zeros((n, n), dtype=np.float64)
+        edges = []
+        idx = {m: i for i, m in enumerate(mag_ids)}
+
+        # Dense within-cluster
+        for cluster in [cluster_a, cluster_b]:
+            for i in range(len(cluster)):
+                for j in range(i + 1, len(cluster)):
+                    edges.append((cluster[i], cluster[j], 0.1))
+                    adjacency[idx[cluster[i]], idx[cluster[j]]] = 1.0
+                    adjacency[idx[cluster[j]], idx[cluster[i]]] = 1.0
+        # X0 connects to A0 and B0
+        for target in ["A0", "B0"]:
+            edges.append(("X0", target, 0.2))
+            adjacency[idx["X0"], idx[target]] = 1.0
+            adjacency[idx[target], idx["X0"]] = 1.0
+
+        net = NetworkResult(mag_ids=mag_ids, adjacency=adjacency, edges=edges, threshold=0.3)
+        topo = compute_topology(net)
+        result = hub_bridge_classification(topo, net)
+        idx_x0 = result.mag_ids.index("X0")
+        # X0 should have high participation (connects two modules)
+        assert result.participation_coefficient[idx_x0] > 0.3
+
+    def test_empty_network(self, empty_network):
+        topo = compute_topology(empty_network)
+        result = hub_bridge_classification(topo, empty_network)
+        # All nodes peripheral with no edges
+        assert all(r == "peripheral" for r in result.roles)
+        np.testing.assert_array_equal(result.participation_coefficient, np.zeros(3))
+        np.testing.assert_array_equal(result.within_module_degree_z, np.zeros(3))

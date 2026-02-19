@@ -12,12 +12,14 @@ from pathlib import Path
 import numpy as np
 
 from .differential import differential_abundance
-from .func_io import DRAMAnnotation, FunctionalTable, build_functional_table
+from .func_io import DRAMAnnotation, FunctionalTable, build_all_functional_tables, build_functional_table
 from .func_profile import (
     cazyme_summary,
     differential_pathway,
     functional_redundancy,
     pathway_abundance,
+    pgpr_enrichment,
+    redundancy_comparison,
 )
 from .io import AbundanceTable, SampleMetadata, TaxonomyTable
 
@@ -36,10 +38,11 @@ def generate_func_report(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Build tables
-    ko_table = build_functional_table(annotations, "ko")
-    cazy_table = build_functional_table(annotations, "cazy")
-    pgpr_table = build_functional_table(annotations, "pgpr")
+    # Build all tables in single pass over annotations
+    tables = build_all_functional_tables(annotations)
+    ko_table = tables["ko"]
+    cazy_table = tables["cazy"]
+    pgpr_table = tables["pgpr"]
 
     # Pathway abundance
     pa = pathway_abundance(ko_table, abundance)
@@ -56,9 +59,31 @@ def generate_func_report(
     redundancy = functional_redundancy(ko_table, abundance, metadata, grouping_var)
     _write_redundancy_csv(redundancy, out / "functional_redundancy.csv")
 
-    # Differential pathway abundance for all group pairs
+    # Redundancy comparison across groups
+    red_cmp = redundancy_comparison(redundancy)
+    _write_redundancy_comparison_csv(red_cmp, out / "redundancy_comparison.csv")
+
+    # PGPR enrichment by group
+    pgpr_enrich = pgpr_enrichment(pgpr_table, abundance, metadata, grouping_var)
+    _write_pgpr_enrichment_csv(pgpr_enrich, out / "pgpr_enrichment.csv")
+
+    # Group setup for pairwise comparisons
     groups = metadata.get_groups(grouping_var)
     group_names = sorted(groups.keys())
+
+    # CAZyme differential (same as pathway differential but for CAZy table)
+    cazy_diff_results = {}
+    for g1, g2 in combinations(group_names, 2):
+        try:
+            cazy_diff = differential_pathway(
+                cazy_table, abundance, metadata, grouping_var, g1, g2,
+            )
+            cazy_diff_results[(g1, g2)] = cazy_diff
+            _write_diff_csv(cazy_diff, g1, g2, out / f"cazyme_differential_{g1}_vs_{g2}.csv")
+        except Exception as e:
+            logger.warning("CAZyme differential %s vs %s failed: %s", g1, g2, e)
+
+    # Differential pathway abundance for all group pairs
     diff_results = {}
 
     for g1, g2 in combinations(group_names, 2):
@@ -136,6 +161,34 @@ def _write_diff_csv(result, g1: str, g2: str, path: Path) -> None:
                 f"{result.q_values[i]:.6f}",
                 f"{result.effect_sizes[i]:.4f}",
             ])
+
+
+def _write_redundancy_comparison_csv(
+    result, path: Path,
+) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["group", "mean_shannon", "sd_shannon"])
+        for g in result.group_names:
+            w.writerow([g, f"{result.mean_shannon[g]:.4f}", f"{result.sd_shannon[g]:.4f}"])
+        w.writerow([])
+        w.writerow(["test", "statistic", "p_value"])
+        w.writerow(["Kruskal-Wallis", f"{result.statistic:.4f}", f"{result.p_value:.6f}"])
+        for (g1, g2), p in sorted(result.pairwise.items()):
+            w.writerow([f"Mann-Whitney_{g1}_vs_{g2}", "", f"{p:.6f}"])
+
+
+def _write_pgpr_enrichment_csv(result, path: Path) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        header = ["trait"] + result.group_names + ["p_value", "q_value"]
+        w.writerow(header)
+        for trait in result.trait_names:
+            row = [trait]
+            row.extend([str(result.counts[trait][g]) for g in result.group_names])
+            row.append(f"{result.p_values[trait]:.6f}")
+            row.append(f"{result.q_values[trait]:.6f}")
+            w.writerow(row)
 
 
 def _embed_figure(path: Path) -> str:

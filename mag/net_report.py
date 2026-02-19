@@ -20,12 +20,16 @@ from .net_correlation import (
     threshold_sensitivity,
 )
 from .net_topology import (
+    HubBridgeResult,
     KeystoneTaxaResult,
+    ModuleCompositionResult,
     NullModelResult,
     NetworkTopology,
     compute_topology,
     differential_network,
+    hub_bridge_classification,
     identify_keystones,
+    module_composition,
     network_null_model,
 )
 
@@ -74,6 +78,18 @@ def generate_net_report(
     # Threshold sensitivity analysis
     sensitivity = threshold_sensitivity(corr, abundance.mag_ids)
     _write_sensitivity_csv(sensitivity, out / "threshold_sensitivity.csv")
+
+    # Module taxonomic composition
+    if taxonomy:
+        mod_comp = module_composition(global_topo, taxonomy)
+        _write_module_composition_csv(mod_comp, out / "module_composition.csv")
+
+    # Hub vs bridge classification (Guimera-Amaral z-P)
+    hub_bridge = hub_bridge_classification(global_topo, global_net)
+    _write_hub_bridge_csv(hub_bridge, out / "hub_bridge_classification.csv", taxonomy)
+
+    # Keystone × PGPR cross-reference (if pgpr_table provided via kwargs)
+    # This is wired from generate_combined_report if both func + net are run
 
     # Per-group networks
     groups = metadata.get_groups(grouping_var)
@@ -324,6 +340,53 @@ def _write_keystones_csv(ks: KeystoneTaxaResult, path: Path, taxonomy: TaxonomyT
                 "yes" if ks.is_keystone[i] else "no",
                 f"{ks.metrics['betweenness'][i]:.6f}",
                 f"{ks.metrics['mean_abundance'][i]:.2f}",
+            ])
+            w.writerow(row)
+
+
+def _write_module_composition_csv(result: ModuleCompositionResult, path: Path) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["module_id", "n_mags", "dominant_phylum", "dominant_fraction", "phylum_breakdown"])
+        for i, mod_id in enumerate(result.module_ids):
+            breakdown = "; ".join(
+                f"{p}:{c}" for p, c in sorted(
+                    result.phylum_counts[mod_id].items(), key=lambda x: -x[1]
+                )
+            )
+            w.writerow([
+                mod_id,
+                result.n_mags[i],
+                result.dominant_phylum[i],
+                f"{result.dominant_fraction[i]:.3f}",
+                breakdown,
+            ])
+
+
+def _write_hub_bridge_csv(
+    result: HubBridgeResult, path: Path, taxonomy: TaxonomyTable | None,
+) -> None:
+    tax_map: dict[str, tuple[str, str]] = {}
+    if taxonomy:
+        for m in result.mag_ids:
+            rec = taxonomy.get(m)
+            tax_map[m] = (rec.phylum if rec else "", rec.genus if rec else "")
+
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        header = ["MAG_ID"]
+        if taxonomy:
+            header.extend(["phylum", "genus"])
+        header.extend(["z_score", "participation_coeff", "role"])
+        w.writerow(header)
+        for i, m in enumerate(result.mag_ids):
+            row = [m]
+            if taxonomy:
+                row.extend(tax_map.get(m, ("", "")))
+            row.extend([
+                f"{result.within_module_degree_z[i]:.4f}",
+                f"{result.participation_coefficient[i]:.4f}",
+                result.roles[i],
             ])
             w.writerow(row)
 

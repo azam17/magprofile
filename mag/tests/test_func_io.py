@@ -11,6 +11,7 @@ from mag.func_io import (
     PGPR_MARKERS,
     DRAMAnnotation,
     FunctionalTable,
+    build_all_functional_tables,
     build_functional_table,
     load_dram_annotations,
 )
@@ -162,3 +163,95 @@ class TestPGPRMarkers:
         assert PGPR_MARKERS["nifH"] == "K02588"
         assert "phzF" in PGPR_MARKERS
         assert PGPR_MARKERS["phzF"] == "K18000"
+
+
+# ===== TestBuildAllFunctionalTables =========================================
+
+
+class TestBuildAllFunctionalTables:
+    """Verify single-pass builder matches individual builders."""
+
+    def test_matches_individual_builders(self, annotations: list[DRAMAnnotation]) -> None:
+        """build_all_functional_tables must produce identical tables to
+        calling build_functional_table 3 times."""
+        ko_ref = build_functional_table(annotations, "ko")
+        cazy_ref = build_functional_table(annotations, "cazy")
+        pgpr_ref = build_functional_table(annotations, "pgpr")
+
+        all_tables = build_all_functional_tables(annotations)
+        ko = all_tables["ko"]
+        cazy = all_tables["cazy"]
+        pgpr = all_tables["pgpr"]
+
+        # KO table: same functions, same MAGs, same values
+        assert set(ko.function_ids) == set(ko_ref.function_ids)
+        assert set(ko.mag_ids) == set(ko_ref.mag_ids)
+        # Align by MAG/function ordering and compare values
+        for fi, fid in enumerate(ko_ref.function_ids):
+            for mi, mid in enumerate(ko_ref.mag_ids):
+                fi2 = ko.function_ids.index(fid)
+                mi2 = ko.mag_ids.index(mid)
+                assert ko.values[fi2, mi2] == ko_ref.values[fi, mi], (
+                    f"KO mismatch at ({fid}, {mid})"
+                )
+
+        # CAZy table
+        assert set(cazy.function_ids) == set(cazy_ref.function_ids)
+        assert set(cazy.mag_ids) == set(cazy_ref.mag_ids)
+        for fi, fid in enumerate(cazy_ref.function_ids):
+            for mi, mid in enumerate(cazy_ref.mag_ids):
+                fi2 = cazy.function_ids.index(fid)
+                mi2 = cazy.mag_ids.index(mid)
+                assert cazy.values[fi2, mi2] == cazy_ref.values[fi, mi], (
+                    f"CAZy mismatch at ({fid}, {mid})"
+                )
+
+        # PGPR table
+        assert set(pgpr.function_ids) == set(pgpr_ref.function_ids)
+        assert set(pgpr.mag_ids) == set(pgpr_ref.mag_ids)
+        for fi, fid in enumerate(pgpr_ref.function_ids):
+            for mi, mid in enumerate(pgpr_ref.mag_ids):
+                fi2 = pgpr.function_ids.index(fid)
+                mi2 = pgpr.mag_ids.index(mid)
+                assert pgpr.values[fi2, mi2] == pgpr_ref.values[fi, mi], (
+                    f"PGPR mismatch at ({fid}, {mid})"
+                )
+
+    def test_function_types(self, annotations: list[DRAMAnnotation]) -> None:
+        all_tables = build_all_functional_tables(annotations)
+        assert all_tables["ko"].function_type == "ko"
+        assert all_tables["cazy"].function_type == "cazy"
+        assert all_tables["pgpr"].function_type == "pgpr"
+
+    def test_empty_annotations(self) -> None:
+        """Empty annotations should produce empty tables."""
+        all_tables = build_all_functional_tables([])
+        assert len(all_tables["ko"].function_ids) == 0
+        assert len(all_tables["cazy"].function_ids) == 0
+        # PGPR traits are still defined as rows (13 traits), but no MAGs
+        assert len(all_tables["pgpr"].function_ids) == len(PGPR_MARKERS)
+        assert len(all_tables["pgpr"].mag_ids) == 0
+
+    def test_ko_only_annotations(self) -> None:
+        """Annotations with only KO IDs should produce empty CAZy table."""
+        anns = [
+            DRAMAnnotation(gene_id="M1_001", mag_id="M1", ko_id="K00001"),
+            DRAMAnnotation(gene_id="M1_002", mag_id="M1", ko_id="K00002"),
+        ]
+        all_tables = build_all_functional_tables(anns)
+        assert len(all_tables["ko"].function_ids) == 2
+        assert len(all_tables["cazy"].function_ids) == 0
+        assert all_tables["ko"].values.sum() == 2.0  # binary presence
+
+    def test_cazy_counts_not_binary(self) -> None:
+        """CAZy table should accumulate counts, not binary presence."""
+        anns = [
+            DRAMAnnotation(gene_id="M1_001", mag_id="M1", cazy_id="GH5"),
+            DRAMAnnotation(gene_id="M1_002", mag_id="M1", cazy_id="GH5"),
+            DRAMAnnotation(gene_id="M1_003", mag_id="M1", cazy_id="GH5"),
+        ]
+        all_tables = build_all_functional_tables(anns)
+        cazy = all_tables["cazy"]
+        gh5_row = cazy.function_ids.index("GH5")
+        m1_col = cazy.mag_ids.index("M1")
+        assert cazy.values[gh5_row, m1_col] == 3.0

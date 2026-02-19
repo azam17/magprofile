@@ -93,7 +93,14 @@ def generate_report(
     all_vars = set()
     for rec in metadata.records.values():
         all_vars.update(rec.keys())
-    grouping_vars = sorted(all_vars - {"replicate"})
+    # Exclude "replicate" and composite variables that nest others (e.g.
+    # "group" = site x compartment).  Prefer independent axes like
+    # "compartment" and "site" for meaningful partitioning.
+    vp_exclude = {"replicate", "group"}
+    grouping_vars = sorted(all_vars - vp_exclude)
+    if len(grouping_vars) < 2:
+        # Fall back to all non-replicate variables if exclusion leaves < 2
+        grouping_vars = sorted(all_vars - {"replicate"})
     if len(grouping_vars) >= 2:
         vp = stats_mod.variance_partition(
             bc.distance_matrix, bc.sample_ids, metadata, grouping_vars[:2],

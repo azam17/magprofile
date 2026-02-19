@@ -284,6 +284,91 @@ def _build_pgpr_table(annotations: list[DRAMAnnotation]) -> FunctionalTable:
     )
 
 
+def build_all_functional_tables(
+    annotations: list[DRAMAnnotation],
+) -> dict[str, FunctionalTable]:
+    """Build KO, CAZy, and PGPR tables in a single pass over annotations.
+
+    Returns a dict with keys ``"ko"``, ``"cazy"``, ``"pgpr"``.
+    """
+    ko_to_trait: dict[str, str] = {ko: trait for trait, ko in PGPR_MARKERS.items()}
+
+    # Collect data in single pass
+    ko_mags: dict[str, set[str]] = {}
+    cazy_counts: dict[str, dict[str, float]] = {}
+    pgpr_mags: dict[str, set[str]] = {trait: set() for trait in PGPR_MARKERS}
+    all_mags: dict[str, int] = {}
+
+    for ann in annotations:
+        all_mags.setdefault(ann.mag_id, len(all_mags))
+        if ann.ko_id:
+            ko_mags.setdefault(ann.ko_id, set()).add(ann.mag_id)
+            if ann.ko_id in ko_to_trait:
+                pgpr_mags[ko_to_trait[ann.ko_id]].add(ann.mag_id)
+        if ann.cazy_id:
+            cazy_counts.setdefault(ann.cazy_id, {})
+            cazy_counts[ann.cazy_id][ann.mag_id] = (
+                cazy_counts[ann.cazy_id].get(ann.mag_id, 0.0) + 1.0
+            )
+
+    # Build KO table
+    ko_mag_set: dict[str, int] = {}
+    for mags in ko_mags.values():
+        for m in mags:
+            ko_mag_set.setdefault(m, len(ko_mag_set))
+    ko_mag_ids = sorted(ko_mag_set, key=ko_mag_set.get)  # type: ignore[arg-type]
+    ko_ids = sorted(ko_mags, key=lambda k: next(
+        i for i, ann in enumerate(annotations) if ann.ko_id == k
+    ))
+    # Simpler: preserve insertion order
+    ko_ids = list(ko_mags.keys())
+    ko_mag_idx = {m: i for i, m in enumerate(ko_mag_ids)}
+    ko_func_idx = {k: i for i, k in enumerate(ko_ids)}
+    ko_values = np.zeros((len(ko_ids), len(ko_mag_ids)), dtype=np.float64)
+    for ko, mags in ko_mags.items():
+        fi = ko_func_idx[ko]
+        for m in mags:
+            ko_values[fi, ko_mag_idx[m]] = 1.0
+    ko_table = FunctionalTable(
+        function_ids=ko_ids, mag_ids=ko_mag_ids,
+        values=ko_values, function_type="ko",
+    )
+
+    # Build CAZy table
+    cazy_mag_set: dict[str, int] = {}
+    for mag_counts in cazy_counts.values():
+        for m in mag_counts:
+            cazy_mag_set.setdefault(m, len(cazy_mag_set))
+    cazy_mag_ids = sorted(cazy_mag_set, key=cazy_mag_set.get)  # type: ignore[arg-type]
+    cazy_ids = list(cazy_counts.keys())
+    cazy_mag_idx = {m: i for i, m in enumerate(cazy_mag_ids)}
+    cazy_func_idx = {c: i for i, c in enumerate(cazy_ids)}
+    cazy_values = np.zeros((len(cazy_ids), len(cazy_mag_ids)), dtype=np.float64)
+    for cazy, mag_counts in cazy_counts.items():
+        fi = cazy_func_idx[cazy]
+        for m, count in mag_counts.items():
+            cazy_values[fi, cazy_mag_idx[m]] = count
+    cazy_table = FunctionalTable(
+        function_ids=cazy_ids, mag_ids=cazy_mag_ids,
+        values=cazy_values, function_type="cazy",
+    )
+
+    # Build PGPR table
+    all_mag_ids = sorted(all_mags, key=all_mags.get)  # type: ignore[arg-type]
+    pgpr_mag_idx = {m: i for i, m in enumerate(all_mag_ids)}
+    trait_names = list(PGPR_MARKERS.keys())
+    pgpr_values = np.zeros((len(trait_names), len(all_mag_ids)), dtype=np.float64)
+    for ti, trait in enumerate(trait_names):
+        for m in pgpr_mags[trait]:
+            pgpr_values[ti, pgpr_mag_idx[m]] = 1.0
+    pgpr_table = FunctionalTable(
+        function_ids=trait_names, mag_ids=all_mag_ids,
+        values=pgpr_values, function_type="pgpr",
+    )
+
+    return {"ko": ko_table, "cazy": cazy_table, "pgpr": pgpr_table}
+
+
 def build_functional_table(
     annotations: list[DRAMAnnotation],
     function_type: str,
