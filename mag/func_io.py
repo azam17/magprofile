@@ -109,11 +109,24 @@ class FunctionalTable:
 # ---------------------------------------------------------------------------
 
 _GENE_ID_SUFFIX_RE = re.compile(r"_\d+$")
+_CONTIG_GENE_SUFFIX_RE = re.compile(r"_k\d+_\d+$")
+
+
+def _normalize_mag_id(mag_id: str) -> str:
+    """Normalize MAG identifiers across tools (dot/underscore variants)."""
+    return mag_id.strip().replace(".", "_")
 
 
 def _mag_id_from_gene_id(gene_id: str) -> str:
-    """Derive MAG ID by stripping the trailing ``_NNNNN`` suffix."""
-    return _GENE_ID_SUFFIX_RE.sub("", gene_id)
+    """Derive MAG ID from gene IDs emitted by DRAM/prodigal.
+
+    Handles both patterns:
+    - ``MAG_12345``
+    - ``MAG_k141_1063138``
+    """
+    mag = _CONTIG_GENE_SUFFIX_RE.sub("", gene_id)
+    mag = _GENE_ID_SUFFIX_RE.sub("", mag)
+    return _normalize_mag_id(mag)
 
 
 def load_dram_annotations(path: str | Path) -> list[DRAMAnnotation]:
@@ -148,9 +161,19 @@ def load_dram_annotations(path: str | Path) -> list[DRAMAnnotation]:
             if not gene_id:
                 continue
 
-            mag_id = _mag_id_from_gene_id(gene_id)
+            # Prefer explicit MAG/bin identifier from DRAM when present.
+            fasta_mag = row.get("fasta", "").strip()
+            if fasta_mag:
+                mag_id = _normalize_mag_id(fasta_mag)
+            else:
+                mag_id = _mag_id_from_gene_id(gene_id)
 
-            ko_id = row.get("kegg_id", "").strip() or None
+            # DRAM commonly uses `ko_id`; keep `kegg_id` fallback for compatibility.
+            ko_id = (
+                row.get("ko_id", "").strip()
+                or row.get("kegg_id", "").strip()
+                or None
+            )
             kegg_hit = row.get("kegg_hit", "").strip() or None
             cazy_id = row.get("cazy_hits", "").strip() or None
             pfam_id = row.get("pfam_hits", "").strip() or None
