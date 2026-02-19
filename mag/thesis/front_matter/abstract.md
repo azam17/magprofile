@@ -1,92 +1,37 @@
-# Front Matter
+# Abstract
+
+**Thesis Title:** Metagenome-Assembled Genome Analysis of Oil Palm (*Elaeis guineensis*) Root-Associated Microbiomes: Compartment-Driven Assembly and Functional Resilience under Ganoderma Basal Stem Rot
 
 ---
 
-## Abstrak
+## Abstract (English, ~350 words)
 
-Kelapa sawit (*Elaeis guineensis*) merupakan tanaman minyak terpenting di Asia Tenggara, namun kelestariannya diancam oleh reput pangkal batang (RPB) yang disebabkan oleh *Ganoderma boninense*. Kajian ini menganalisis mikrobiom berkaitan akar kelapa sawit pada resolusi genom melalui analisis genom terhimpun metagenom (MAG). Sebanyak 1,018 MAG diperoleh daripada 30 sampel merangkumi tiga kompartmen akar (tanah pukal, rizosfera, endosfera) dan dua status kesihatan (sihat, berpenyakit) di ladang kelapa sawit Malaysia. Analisis ekologi menunjukkan kompartmen menjelaskan 42.4% variasi komuniti (PERMANOVA R² = 0.424, p = 0.001), manakala penyakit hanya menjelaskan 5.2% (p = 0.120, tidak signifikan). Sebanyak 634 MAG berbeza secara signifikan antara tanah pukal dan endosfera, tetapi sifar antara status kesihatan. Endosfera mempunyai semua 65 pakar kompartmen, termasuk 15 MAG pemangsa Myxococcota dan lima MAG fotoheterotrof *Roseiarcus*. Profil fungsi 567 MAG berkualiti tinggi mengenal pasti 6,233 ortolog KEGG dan 532 keluarga CAZyme, dengan gen penetapan nitrogen (*nifHDK*) dan ACC deaminase (*acdS*) diperkaya secara signifikan dalam endosfera. Lewahan fungsi lebih tinggi dalam kompartmen akar (Shannon 2.99) berbanding tanah pukal (2.71; p < 0.001) dan tidak terjejas oleh penyakit. Analisis rangkaian ko-kejadian mengenal pasti 25,883 tepi tersusun dalam 258 modul bukan rawak (z = 81.36). *Terracidiphilus* (Acidobacteriota) merupakan takson batu kunci utama (skor 0.981), manakala Myxococcota berfungsi sebagai jambatan antara modul. Penyakit meningkatkan kepadatan rangkaian sebanyak 27% tanpa mengubah komposisi atau fungsi — dysbiosis struktur. Penemuan ini menunjukkan mekanisme insurans tiga lapisan — lewahan taksonomi, sandaran fungsi, dan seni bina rangkaian modular — yang mengekalkan kestabilan mikrobiom di bawah RPB.
+Basal stem rot (BSR) caused by *Ganoderma boninense* is the most devastating disease of oil palm (*Elaeis guineensis*) in Southeast Asia, yet the root-associated microbiome's role in disease resilience remains uncharacterised at the genome level. This thesis presents the first metagenome-assembled genome (MAG) analysis of oil palm root microbiomes, integrating ecological, functional, and network analyses across three root compartments (bulk soil, rhizosphere, endosphere) and two health states (healthy, BSR-diseased) from a Malaysian plantation (30 samples, 5 replicates per group).
 
-**Kata kunci:** kelapa sawit; *Ganoderma boninense*; genom terhimpun metagenom; lewahan fungsi; rangkaian ko-kejadian; takson batu kunci; reput pangkal batang; mikrobiom akar
+Recovery of 1,018 non-redundant MAGs (567 high-quality) spanning 36 phyla revealed that compartment identity is the master ecological variable, explaining 42.4% of community variation (PERMANOVA, *p* = 0.001) versus only 5.2% for disease (*p* = 0.120). The endosphere harboured all 65 compartment specialists, including a novel 15-member Myxococcota predatory guild (10-fold enrichment), five *Roseiarcus* photoheterotrophs, and near-complete archaea exclusion (Cohen's *d* > 6.0). Core membership was universal (1,017/1,018 MAGs at 100% prevalence).
 
----
+Functional profiling of 567 high-quality MAGs identified 6,233 KEGG orthologues and 532 CAZyme families, with >2,000 differential pathways between compartments but zero for disease. Nitrogen fixation genes (*nifHDK*) and ACC deaminase (*acdS*) were enriched in the endosphere. Functional redundancy was higher in root compartments (Shannon 2.99 vs 2.71; *p* < 0.001) and unaffected by disease.
 
-## Abstract
+Co-occurrence network analysis identified 25,883 edges in 258 non-random modules (null model *z* = 81.36). *Terracidiphilus* (Acidobacteriota) emerged as the top keystone taxon (score 0.981), while Myxococcota served as inter-module bridges. Disease increased network density by 27% without altering composition or function—a structural dysbiosis invisible to standard profiling.
 
-Oil palm (*Elaeis guineensis*) is Southeast Asia's most economically important crop, yet its sustainability is threatened by basal stem rot (BSR) caused by *Ganoderma boninense*. This thesis investigated the root-associated microbiome of oil palm at genome resolution through metagenome-assembled genome (MAG) analysis. A total of 1,018 MAGs were recovered from 30 samples spanning three root compartments (bulk soil, rhizosphere, endosphere) and two health states (healthy, diseased) in a Malaysian oil palm plantation. Ecological analysis demonstrated that compartment explained 42.4% of community variation (PERMANOVA R² = 0.424, *p* = 0.001), while disease explained only 5.2% (*p* = 0.120, not significant). A total of 634 MAGs were differentially abundant between bulk soil and endosphere, but zero between health states. The endosphere harboured all 65 compartment specialists, including a 15-member Myxococcota predatory guild and five *Roseiarcus* photoheterotrophic MAGs. Functional profiling of 567 high-quality MAGs identified 6,233 KEGG orthologues and 532 CAZyme families, with nitrogen fixation genes (*nifHDK*) and ACC deaminase (*acdS*) significantly enriched in the endosphere. Functional redundancy was higher in root compartments (Shannon 2.99) than bulk soil (2.71; *p* < 0.001) and unaffected by disease. Co-occurrence network analysis identified 25,883 edges organised into 258 non-random modules (null model *z* = 81.36). *Terracidiphilus* (Acidobacteriota) emerged as the top keystone taxon (score 0.981), while Myxococcota served as inter-module bridges. Disease increased network density by 27% without altering composition or function — structural dysbiosis. These findings demonstrate a three-layer insurance mechanism — taxonomic redundancy, functional backup, and modular network architecture — that maintains microbiome resilience under BSR.
+These results demonstrate a three-layer insurance mechanism—taxonomic generalism, functional redundancy, and modular network architecture—maintaining microbiome resilience under BSR. The Acidobacteriota-Myxococcota trophic axis is identified as a promising target for microbiome-based biocontrol. The magprofile software toolkit (3 modules, 158 tests) is contributed as an open-source resource.
 
-**Keywords:** oil palm; *Ganoderma boninense*; metagenome-assembled genomes; functional redundancy; co-occurrence network; keystone taxa; basal stem rot; root microbiome
-
----
-
-## Acknowledgements
-
-[To be completed by the candidate]
-
-I would like to express my sincere gratitude to:
-
-- My supervisory committee for their guidance throughout this research
-- The Malaysian Palm Oil Board (MPOB) for providing access to plantation sites and metagenomic data
-- [Supervisor names] for their invaluable mentorship and scientific insight
-- [Lab members] for their support and camaraderie
-- The Graduate School of UPM for administrative support
-- My family for their unwavering encouragement
-- [Funding body] for financial support under grant [number]
+**Keywords:** metagenome-assembled genomes; oil palm; *Ganoderma boninense*; root microbiome; functional redundancy; co-occurrence network; keystone taxa; Myxococcota; insurance hypothesis
 
 ---
 
-## List of Publications
+## Abstrak (Bahasa Malaysia, ~350 words)
 
-### Papers arising from this thesis
+[TO BE TRANSLATED — content mirrors English abstract above]
 
-1. [Author names]. Compartment-driven assembly of oil palm (*Elaeis guineensis*) root microbiomes under Ganoderma basal stem rot: a metagenome-assembled genome analysis. *FEMS Microbiology Ecology* [submitted/in review/accepted].
+Reput pangkal batang (BSR) yang disebabkan oleh *Ganoderma boninense* merupakan penyakit paling merosakkan kelapa sawit (*Elaeis guineensis*) di Asia Tenggara, namun peranan mikrobiom akar dalam ketahanan penyakit masih belum dicirikan pada peringkat genom. Tesis ini membentangkan analisis genom himpunan metagenom (MAG) pertama bagi mikrobiom akar kelapa sawit, mengintegrasikan analisis ekologi, fungsi, dan rangkaian merentasi tiga kompartmen akar (tanah pukal, rizosfera, endosfera) dan dua keadaan kesihatan (sihat, BSR) daripada ladang di Malaysia (30 sampel, 5 replikat setiap kumpulan).
 
-2. [Author names]. Functional resilience and interaction network architecture of oil palm root-associated microbiomes under Ganoderma basal stem rot. *Pertanika Journal of Tropical Agricultural Science* [submitted/in review/accepted].
+Pemulihan 1,018 MAG tidak berulang (567 berkualiti tinggi) merangkumi 36 filum menunjukkan identiti kompartmen sebagai pemboleh ubah ekologi utama, menjelaskan 42.4% variasi komuniti (PERMANOVA, *p* = 0.001) berbanding hanya 5.2% bagi penyakit (*p* = 0.120). Endosfera menempatkan kesemua 65 spesialis kompartmen, termasuk gugusan pemangsa Myxococcota 15 ahli yang novel (pengayaan 10 kali ganda), lima fotoheterotrof *Roseiarcus*, dan pengecualian hampir lengkap arkea (Cohen's *d* > 6.0).
 
-### Conference presentations
+Profilan fungsi 567 MAG berkualiti tinggi mengenal pasti 6,233 ortolog KEGG dan 532 keluarga CAZyme, dengan >2,000 laluan berbeza antara kompartmen tetapi sifar untuk penyakit. Gen penambatan nitrogen (*nifHDK*) dan ACC deaminase (*acdS*) diperkayakan dalam endosfera. Lewahan fungsi lebih tinggi dalam kompartmen akar dan tidak terjejas oleh penyakit.
 
-[To be added if applicable]
+Analisis rangkaian ko-kejadian mengenal pasti 25,883 tepi dalam 258 modul bukan rawak (*z* = 81.36). *Terracidiphilus* (Acidobacteriota) muncul sebagai takson batu kunci utama (skor 0.981). Penyakit meningkatkan ketumpatan rangkaian sebanyak 27% tanpa mengubah komposisi atau fungsi.
 
----
+Keputusan ini menunjukkan mekanisme insurans tiga lapisan yang mengekalkan ketahanan mikrobiom di bawah BSR. Paksi trofik Acidobacteriota-Myxococcota dikenal pasti sebagai sasaran untuk kawalan biologi berasaskan mikrobiom.
 
-## List of Abbreviations
-
-| Abbreviation | Full form |
-|-------------|-----------|
-| AA | Auxiliary activities (CAZyme class) |
-| ACC | 1-Aminocyclopropane-1-carboxylate |
-| AMF | Arbuscular mycorrhizal fungi |
-| ANOSIM | Analysis of similarities |
-| AOA | Ammonia-oxidising archaea |
-| BSR | Basal stem rot |
-| CAZyme | Carbohydrate-active enzyme |
-| CBM | Carbohydrate-binding module |
-| CE | Carbohydrate esterase |
-| CLR | Centre log-ratio |
-| CPO | Crude palm oil |
-| CPR | Candidate phyla radiation |
-| DPANN | Diapherotrites, Parvarchaeota, Aenigmarchaeota, Nanoarchaeota, Nanohaloarchaeota |
-| DRAM | Distilled and Refined Annotation of Metabolism |
-| FDR | False discovery rate |
-| GH | Glycoside hydrolase |
-| GT | Glycosyltransferase |
-| GTDB | Genome Taxonomy Database |
-| HQ | High quality |
-| IndVal | Indicator value |
-| KEGG | Kyoto Encyclopedia of Genes and Genomes |
-| KO | KEGG Orthology |
-| KW | Kruskal-Wallis test |
-| MAG | Metagenome-assembled genome |
-| MAMP | Microbe-associated molecular pattern |
-| MIMAG | Minimum Information about a Metagenome-Assembled Genome |
-| MPOB | Malaysian Palm Oil Board |
-| MQ | Medium quality |
-| MSPO | Malaysian Sustainable Palm Oil |
-| NS | Not significant |
-| PCoA | Principal coordinates analysis |
-| PERMANOVA | Permutational multivariate analysis of variance |
-| PERMDISP | Permutational analysis of multivariate dispersions |
-| PGPR | Plant growth-promoting rhizobacteria |
-| PKO | Palm kernel oil |
-| PL | Polysaccharide lyase |
-| PTI | Pattern-triggered immunity |
-| UPM | Universiti Putra Malaysia |
+**Kata kunci:** genom himpunan metagenom; kelapa sawit; *Ganoderma boninense*; mikrobiom akar; lewahan fungsi; rangkaian ko-kejadian; takson batu kunci; Myxococcota; hipotesis insurans

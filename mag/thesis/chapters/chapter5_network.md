@@ -1,119 +1,179 @@
-# Chapter 5: Co-occurrence Networks and Keystone Taxa in Oil Palm Root-Associated Microbiomes
+# Chapter 5: Co-occurrence Networks and Keystone Taxa in Oil Palm Soils
 
-*This chapter addresses Objective 3 and corresponds to the network analysis component of Paper 2.*
+**Estimated length:** 25–35 pages | **Writing priority:** 5th (June 2026)
+
+**Relationship to Paper 2:** This chapter expands the network analysis component of Paper 2 (Pertanika JTAS) into thesis format. Additional content includes: expanded methodology, detailed module-by-module analysis, extended keystone characterisation, and thesis-specific framing connecting to Objective 3.
+
+**Source:** Paper 2 manuscript (`thesis/papers/paper2_functional_network.md`) + `v043_analysis_report.txt` Sections 3, 6, 7
 
 ---
 
 ## 5.1 Introduction
 
-[Expanded from Paper 2 Introduction, focused specifically on network questions. ~3-4 pages]
+[Adapted from Paper 2 Introduction, focused on network analysis:]
+- Explicit link to Objective 3
+- Why network analysis is necessary given Chapter 3 and 4 findings
+- Motivation table: each ecological/functional finding → network question (from FINDINGS_v021.md Section 3)
+- Overview of phi proportionality, modularity, keystone, hub-bridge approaches
 
-Key points:
-- Chapters 3-4 established compartment-driven composition and function; this chapter examines interaction architecture
-- Table linking ecological findings to interaction questions (from FINDINGS_v021.md Section 3):
-  - Myxococcota guild → who are they preying on?
-  - Ultrasmall parasites → who are their hosts?
-  - 65 endosphere specialists → do they form a coherent interaction module?
-  - Roseiarcus (5 MAGs) → consistent interaction partners?
-  - Compartment dominance → deterministic or stochastic assembly?
-  - Disease effect (3 MAGs) → specific network module disruption?
-- Co-occurrence network analysis background
-- Specific hypotheses:
-  - H1: Network structure is significantly non-random (null model test)
-  - H2: Modules reflect taxonomic coherence
-  - H3: Keystone taxa are low-abundance but structurally critical
-  - H4: Disease alters network topology without changing composition
+---
 
 ## 5.2 Materials and Methods
 
-### 5.2.1 Network construction
+### 5.2.1 Network Construction
 
-**Source:** Paper 2 Methods
+[Same as Paper 2, expanded with:]
+- CLR transformation details
+- Phi proportionality computation: formula, implementation
+- Prevalence filtering (50% minimum)
+- Threshold selection rationale
 
-- 1,018 MAGs (both HQ and MQ) used for abundance-based network
-- Phi proportionality (Lovell et al., 2015) on CLR-transformed abundances
-- Prevalence filter: ≥50% of samples
-- Threshold: 5th percentile of phi distribution (|phi| < 0.0532)
-- Threshold sensitivity: 1st, 3rd, 5th, 10th, 20th percentiles tested
+### 5.2.2 Threshold Sensitivity Analysis
 
-### 5.2.2 Module detection
+- Five percentiles tested: 1st, 3rd, 5th, 10th, 20th
+- Metrics evaluated: edges, density, modularity, modules
+- Selection criteria: balance resolution with edge count
 
-- Louvain algorithm (Blondel et al., 2008)
-- Modularity Q (Newman, 2006)
-- Module composition analysis (phylum proportions)
+### 5.2.3 Module Detection and Null Model Validation
 
-### 5.2.3 Null model validation
+[Same as Paper 2, expanded with:]
+- Louvain algorithm: resolution parameter
+- Configuration model null: degree sequence preservation
+- 1,000 random networks
+- Z-score computation
 
-- 1,000 random networks via configuration model (preserved degree sequence)
-- z-score = (Q_observed - Q_null_mean) / Q_null_SD
-- p-value from null distribution
+### 5.2.4 Keystone Identification
 
-### 5.2.4 Keystone taxa identification
+[Same as Paper 2, expanded with:]
+- Composite scoring formula
+- Centrality metric definitions (betweenness, closeness, degree)
+- Abundance inverse-weighting
+- Threshold for keystone classification
 
-- Composite score from normalised betweenness, closeness, and degree centrality
-- Inverse-weighted by mean relative abundance
-- "Rare but structurally important" criterion
+### 5.2.5 Hub-Bridge Classification
 
-### 5.2.5 Hub-bridge classification
+[Same as Paper 2, expanded with:]
+- z-P computation per MAG
+- Classification thresholds and justification
+- Module membership assignment
 
-- Guimerà-Amaral (2005) z-P framework
-- Within-module degree z-score (hub threshold: z > 2.5)
-- Participation coefficient P (bridge threshold: P > 0.62)
-- Four-quadrant classification: hub, connector hub, bridge, peripheral
+### 5.2.6 Compartment-Specific and Health-Specific Networks
 
-### 5.2.6 Compartment-specific and health-specific networks
+[Same as Paper 2, expanded with:]
+- Sample subsetting strategy
+- Recalculation of phi values per subset
+- Differential edge identification algorithm
 
-- Separate networks for bulk, endosphere, rhizosphere (subset samples, recalculate phi)
-- Separate networks for diseased, healthy
-- Network density comparison
+### 5.2.7 Software
 
-### 5.2.7 Differential network analysis
+[magprofile v0.43, magnet module]
 
-- Edge set comparison: conserved, gained, lost edges between health states
-- Compartment differential edges
+---
 
 ## 5.3 Results
 
-### 5.3.1 Global network properties
+### 5.3.1 Global Network Properties
 
-**Source:** v043_analysis_report.txt Section 3.1
+**Table 5.1.** Global network summary:
 
-- 1,018 MAGs, 25,883 edges
-- Network density: 0.050
-- Modularity Q: 0.226
-- 258 modules
-- Phi threshold: 0.0532 (5th percentile)
+| Property | Value |
+|----------|------:|
+| MAGs | 1,018 |
+| Edges | 25,883 |
+| Density | 0.050 |
+| Modularity (*Q*) | 0.226 |
+| Modules | 258 |
+| Phi threshold | 0.0532 (5th percentile) |
 
-### 5.3.2 Non-random modular structure (null model)
+### 5.3.2 Threshold Sensitivity
 
-**Source:** v043_analysis_report.txt Section 3.2
-
-- Observed modularity: 0.226
-- Null model mean: 0.073 ± 0.002
-- z-score: 81.36
-- p < 0.001
-
-81 standard deviations above random — the community structure is overwhelmingly non-random.
-
-Context: Li et al. (2022) define z > 2 as significant, modularity > 0.4 as modular. z = 81 far exceeds typical reports (z = 5-30), reflecting the statistical power of 1,018 MAGs.
-
-### 5.3.3 Threshold sensitivity
-
-**Source:** v043_analysis_report.txt Section 3.3
+**Table 5.2.** Network properties across thresholds:
 
 | Percentile | Threshold | Edges | Modularity | Modules |
-|----------:|----------:|------:|-----------:|--------:|
+|-----------:|----------:|------:|-----------:|--------:|
 | 1% | 0.029 | 5,177 | 0.306 | 521 |
 | 3% | 0.043 | 15,530 | 0.250 | 341 |
 | 5% | 0.053 | 25,883 | 0.226 | 258 |
 | 10% | 0.073 | 51,766 | 0.189 | 163 |
 | 20% | 0.106 | 103,531 | 0.158 | 78 |
 
-Modularity robust across 20-fold edge count range (0.158–0.306).
+Figure 5.1: Modularity vs threshold curve showing robustness
 
-### 5.3.4 Compartment-specific networks
+### 5.3.3 Null Model Validation
 
-**Source:** v043_analysis_report.txt Section 3.4
+- Observed Q = 0.226
+- Null mean = 0.073 ± 0.002
+- **z = 81.36, p < 0.001**
+- Figure 5.2: Null distribution with observed value indicated
+
+Context: z = 81.36 exceeds values typically reported (z = 5–30; Li et al., 2022). The extreme value reflects large sample size (1,018 MAGs) giving precise null estimates (SD = 0.002).
+
+### 5.3.4 Module Composition
+
+**Table 5.3.** Composition of top modules:
+
+| Module | MAGs | Dominant phylum | Fraction | Key features |
+|-------:|-----:|-----------------|:--------:|:-------------|
+| 0 | 341 | Acidobacteriota | 33.4% | Keystone hub, 8 Myxococcota |
+| 1 | 275 | Pseudomonadota | 24.7% | Copiotrophic cluster |
+| 2 | 117 | Pseudomonadota | 23.9% | Secondary copiotrophic |
+| 3 | 9 | Actinomycetota | 55.6% | Small specialist module |
+| 4 | 6 | Pseudomonadota | 66.7% | Small specialist module |
+
+- 258 total modules; 245 are singletons or small (1–2 MAGs)
+- 36 phyla represented across all modules
+- Module taxonomic coherence analysis: Figure 5.3
+
+### 5.3.5 Keystone Taxa
+
+**Table 5.4.** Top keystone taxa:
+
+| MAG | Phylum | Class | Genus | Score | Betweenness | Abundance (%) |
+|-----|--------|-------|-------|------:|------------:|--------------:|
+| Coassem3_SemiBin_cstrat_619 | Acidobacteriota | Terriglobia | *Terracidiphilus* | 0.981 | 0.012 | 0.30 |
+| Coassem2_maxbin2_438 | Acidobacteriota | Terriglobia | — | 0.896 | — | — |
+| Coassem2_maxbin2_192 | Acidobacteriota | Terriglobia | — | 0.883 | — | — |
+| Coassem2_maxbin2_300 | Verrucomicrobiota | — | — | 0.848 | — | — |
+| Coassem3_SemiBin_cstrat_833 | Chlamydiota | — | JABDCS01 | 0.723 | — | — |
+
+- *Terracidiphilus*: "rare but important" pattern (low abundance, highest centrality)
+- Acidobacteriota dominate top keystone positions (3 of top 5)
+- Figure 5.4: Keystone score distribution with threshold
+
+### 5.3.6 Myxococcota in the Network
+
+**Table 5.5.** All 26 Myxococcota MAGs in network context:
+
+- 26 total (2.6% of 1,018)
+- Dominant class: Polyangia (24/26 = 92%)
+- Most common genus: *Palsa-1150* (13 MAGs)
+- Keystone Myxococcota: 5 (19%)
+- Bridge Myxococcota: 3 (12%)
+- In Module 0: 8 MAGs
+
+**Table 5.6.** Bridge Myxococcota:
+
+| MAG | Genus | P | z | Keystone? |
+|-----|-------|--:|--:|:---------:|
+| Coassem3_metabat_193 | Polyangia | 0.629 | — | Yes |
+| Coassem3_SemiBin_cstrat_536 | *Palsa-1150* | 0.643 | — | Yes |
+| Coassem3_SemiBin_cstrat_790 | *Palsa-1150* | 0.625 | — | Yes |
+
+- All three bridges are also keystones
+- Figure 5.5: Subnetwork of Module 0 highlighting Acidobacteriota-Myxococcota co-occurrence
+
+### 5.3.7 Hub-Bridge Classification
+
+[Expanded from Paper 2]
+- z-P scatter plot: Figure 5.6
+- Hub nodes: high within-module degree (z > 2.5)
+- Bridge nodes: high participation coefficient (P > 0.62)
+- Peripheral: majority of MAGs
+- Classification counts per phylum
+
+### 5.3.8 Compartment-Specific Networks
+
+**Table 5.7.** Compartment network properties:
 
 | Network | Edges | Density |
 |---------|------:|--------:|
@@ -122,166 +182,121 @@ Modularity robust across 20-fold edge count range (0.158–0.306).
 | Endosphere | 119,327 | 0.231 |
 | Rhizosphere | 117,477 | 0.227 |
 
-Density gradient: bulk > endosphere > rhizosphere.
+- Density gradient: bulk > endosphere > rhizosphere
+- Figure 5.7: Side-by-side network visualisations
 
-### 5.3.5 Disease increases network density by 27%
+### 5.3.9 Health-Specific Networks and Structural Dysbiosis
 
-**Source:** v043_analysis_report.txt Sections 3.5–3.6
+**Table 5.8.** Health-specific network properties:
 
 | Network | Edges | Density |
 |---------|------:|--------:|
 | Diseased | 60,351 | 0.117 |
 | Healthy | 47,416 | 0.092 |
+| **Difference** | **+27%** | |
 
-27% more edges in diseased networks.
+**Table 5.9.** Group-level network properties:
 
-Group-level:
 | Group | Edges | Density |
 |-------|------:|--------:|
-| diseased_bulk | 186,809 | 0.361 |
-| diseased_endo | 167,729 | 0.324 |
-| diseased_rhizo | 178,923 | 0.346 |
-| healthy_bulk | 187,003 | 0.361 |
-| healthy_endo | 151,894 | 0.293 |
-| healthy_rhizo | 159,151 | 0.307 |
+| Diseased bulk | 186,809 | 0.361 |
+| Diseased endosphere | 167,729 | 0.324 |
+| Diseased rhizosphere | 178,923 | 0.346 |
+| Healthy bulk | 187,003 | 0.361 |
+| Healthy endosphere | 151,894 | 0.293 |
+| Healthy rhizosphere | 159,151 | 0.307 |
 
-Disease effect strongest in endosphere (0.324 vs 0.293) and rhizosphere (0.346 vs 0.307).
+- Diseased consistently denser across all compartments (except bulk ≈ equal)
+- Edge gain analysis: 90,544 edges in differential network
 
-### 5.3.6 Module composition
+### 5.3.10 Differential Network Analysis
 
-**Source:** v043_analysis_report.txt Section 3.7
-
-| Module | MAGs | Dominant phylum | Fraction |
-|-------:|-----:|-----------------|--------:|
-| 0 | 341 | Acidobacteriota | 33.4% |
-| 1 | 275 | Pseudomonadota | 24.7% |
-| 2 | 117 | Pseudomonadota | 23.9% |
-| 3 | 9 | Actinomycetota | 55.6% |
-| 4 | 6 | Pseudomonadota | 66.7% |
-
-258 total modules; 245 are singletons or small (1-2 MAGs). 36 phyla represented.
-
-### 5.3.7 Keystone taxa
-
-**Source:** v043_analysis_report.txt Section 3.8
-
-Top keystone: **Terracidiphilus** (Acidobacteriota, Terriglobia)
-- MAG: Coassem3_SemiBin_cstrat_619
-- Score: 0.981
-- Betweenness centrality: 0.012
-- Mean abundance: 0.30%
-- Classic "rare but important" pattern
-
-Other notable keystones:
-- Coassem2_maxbin2_438 (Acidobacteriota, Terriglobia): 0.896
-- Coassem2_maxbin2_192 (Acidobacteriota, Terriglobia): 0.883
-- Coassem2_maxbin2_300 (Verrucomicrobiota): 0.848
-- Coassem3_SemiBin_cstrat_833 (Chlamydiota, JABDCS01): 0.723
-
-Acidobacteriota dominate keystone positions.
-
-### 5.3.8 Hub-bridge classification
-
-**Source:** v043_analysis_report.txt Section 3.9
-
-Guimerà-Amaral z-P framework:
-- Hub nodes (z > 2.5): high within-module connectivity
-- Bridge nodes (P > 0.62): connect multiple modules
-- Most MAGs: peripheral (low z, low P)
-
-### 5.3.9 Myxococcota as network bridges
-
-**Source:** v043_analysis_report.txt Section 6
-
-26 Myxococcota MAGs total:
-- 92% class Polyangia
-- 13 genus Palsa-1150
-- 5 identified as keystones (19%)
-- 3 bridges (P = 0.625–0.643)
-- 8 in Module 0 (Acidobacteriota hub)
-
-Bridge Myxococcota:
-| MAG | Genus | P | Keystone |
-|-----|-------|--:|:--------:|
-| Coassem3_metabat_193 | Polyangia | 0.629 | Yes |
-| Coassem3_SemiBin_cstrat_536 | Palsa-1150 | 0.643 | Yes |
-| Coassem3_SemiBin_cstrat_790 | Palsa-1150 | 0.625 | Yes |
-
-### 5.3.10 Differential networks
-
-**Source:** v043_analysis_report.txt Section 3.7 (differential)
-
-Compartment comparisons:
-- Bulk vs Endosphere: 232,388 edges analysed
-- Bulk vs Rhizosphere: 193,986 edges
-- Endo vs Rhizosphere: 186,843 edges
-
-Health comparison:
-- Diseased vs Healthy: 90,544 edges (conserved + gained + lost)
-- Increased density driven by edge gain, not loss
-
-## 5.4 Discussion
-
-### 5.4.1 Non-random modular organisation
-
-[~2 pages]
-
-- z = 81.36 is the strongest statistical validation of non-random structure
-- Comparison with Guimerà & Amaral (2005): z > 2 significant
-- Li et al. (2022): most studies z = 5-30
-- Extreme value reflects 1,018-MAG statistical power
-- Biological interpretation: deterministic assembly processes dominate
-
-### 5.4.2 The Acidobacteriota-Myxococcota trophic axis
-
-[~3 pages. From v043_analysis_report.txt Sections 6.1-6.5]
-
-- Module 0 (341 MAGs): Acidobacteriota anchor
-- Terracidiphilus: cellulose/chitin degrader (García-Fraile et al., 2016), keystone score 0.981
-- 8 Myxococcota within Module 0: predator-prey co-occurrence
-- Zhou et al. (2020): r = -0.495 between phyla (negative correlation = predation)
-- Trophic cascade model:
-  - Acidobacteriota → complex carbon degradation → community metabolism base
-  - Myxococcota → predation → nutrient recycling (C, N, P)
-  - Bridges → cross-module connection via diverse prey
-- Dai et al. (2023): Myxococcota phylogenetic diversity linked to nutrient cycling
-- Goncalves et al. (2024): Acidobacteriota carry PGP genes
-
-### 5.4.3 Structural dysbiosis: disease changes wiring, not components
-
-[~3 pages. From v043_analysis_report.txt Sections 7.1-7.3]
-
-- 27% density increase without compositional or functional change
-- Competing hypotheses: (a) loss of niche partitioning, (b) cooperative stress response
-- Supporting literature:
-  - Gao et al. (2021): Fusarium wilt increased network complexity
-  - Shi et al. (2021): infected samples had more complex networks
-  - Deng et al. (2021): banana Fusarium — contrasting (fewer connections)
-- Myxococcota interaction expansion in disease:
-  - New Bacteroidota-Myxococcota, Verrucomicrobiota-Myxococcota links in diseased networks
-  - Ye et al. (2020): Corallococcus biocontrol against Fusarium (54-80% reduction)
-  - Zhao et al. (2024): Myxococcota enriched in Verticillium wilt
-  - Possible predatory defence recruitment
-
-### 5.4.4 Practical implications: network density as early warning
-
-[~1 page]
-
-- Standard PERMANOVA misses the disease signal entirely (p = 0.120)
-- Network density captures structural reorganisation invisible to compositional analysis
-- Potential early-warning indicator for BSR before visual symptoms appear
-- Monitoring approach: periodic metagenomic sampling with network density tracking
-
-## 5.5 Summary
-
-- 25,883 edges organised into 258 non-random modules (z = 81.36)
-- Terracidiphilus (Acidobacteriota) is the top keystone (score 0.981)
-- Myxococcota serve as inter-module bridges connecting communities via predation
-- Disease increases density by 27% = structural dysbiosis
-- Network analysis captures disease effects invisible to standard approaches
-
-*This completes the three-pillar analysis: ecology (Chapter 3), function (Chapter 4), and network (Chapter 5). Chapter 6 synthesises these findings into the insurance hypothesis and discusses broader implications.*
+[Expanded from Paper 2]
+- Compartment differential edges:
+  - Bulk vs Endosphere: 232,388 edges analysed
+  - Bulk vs Rhizosphere: 193,986 edges
+  - Endosphere vs Rhizosphere: 186,843 edges
+- Health differential edges:
+  - Diseased vs Healthy: 90,544 edges (conserved + gained + lost)
+- Figure 5.8: Differential edge visualisation
+- High conservation between endosphere and rhizosphere → shared root-associated networks
 
 ---
 
-*[Data sources: v043_analysis_report.txt Sections 3.1–3.9, 6.1–6.5, 7.1–7.3]*
+## 5.4 Discussion
+
+### 5.4.1 Non-Random Modular Architecture
+
+[Expanded from Paper 2]
+- z = 81.36 as strongest validation in soil microbiome literature
+- Comparison with other z-scores: Li et al. (2022) review
+- Ecological interpretation: deterministic assembly, not ecological drift
+- Module size distribution: power law or truncated?
+
+### 5.4.2 The Acidobacteriota-Myxococcota Trophic Cascade
+
+[Major expansion from Paper 2]
+- Acidobacteriota as keystone: Module 0, 341 MAGs, *Terracidiphilus* (0.981)
+- *Terracidiphilus* characterisation: cellulose/chitin degradation (García-Fraile et al., 2016)
+- Myxococcota as bridges: 3 Polyangia MAGs connecting modules
+- Predator-prey dynamics: Zhou et al. (2020) negative correlation
+- Nutrient recycling model:
+  - Acidobacteriota degrade complex C → release simple sugars
+  - Myxococcota prey on Acidobacteriota → release N, P, C back to soil
+  - This "microbial loop" drives nutrient cycling
+- Comparison with marine viral shunt
+- Dai et al. (2023): Myxococcota diversity linked to multi-nutrient cycling
+
+### 5.4.3 Structural Dysbiosis under Disease
+
+[Major expansion from Paper 2]
+- 27% denser network in diseased soils
+- No compositional change (Chapter 3) + no functional change (Chapter 4) + structural change = structural dysbiosis
+- Hypotheses:
+  - (a) Loss of niche partitioning → homogenisation of co-occurrence
+  - (b) Cooperative stress response → more cross-talk
+- Literature comparison:
+  - Gao et al. (2021): Fusarium increased complexity (supports)
+  - Shi et al. (2021): Verticillium increased complexity (supports)
+  - Deng et al. (2021): Banana Fusarium decreased complexity (contrasts)
+- Implications: network density as early-warning indicator for BSR
+
+### 5.4.4 Myxococcota and Disease Response
+
+[Expanded from Paper 2]
+- Expanded interaction profiles in diseased networks
+- Bacteroidota-Myxococcota and Verrucomicrobiota-Myxococcota links
+- Biocontrol literature: Ye et al. (2020), Zhao et al. (2024), Kuang et al. (2023)
+- Predatory recruitment hypothesis
+
+### 5.4.5 Network Analysis Complements Community Profiling
+
+- Standard approaches (PERMANOVA, differential abundance) miss structural dysbiosis
+- Network analysis detects disease signal invisible to compositional methods
+- Recommendation: network analysis as standard component of disease microbiome studies
+
+### 5.4.6 Limitations
+
+[Same as Paper 2, expanded:]
+- Co-occurrence ≠ interaction
+- Correlation does not imply causation
+- Threshold sensitivity
+- Small sample size for group-level networks (n = 5 per group)
+- Need for experimental validation (predation assays, stable isotope probing)
+
+---
+
+## 5.5 Conclusions
+
+[Mapped explicitly to Objective 3:]
+1. The oil palm microbiome forms 258 non-random modules (z = 81.36), indicating deterministic assembly
+2. *Terracidiphilus* (Acidobacteriota) is the top keystone taxon; Myxococcota serve as inter-module bridges
+3. The Acidobacteriota-Myxococcota trophic cascade anchors community metabolism and connectivity
+4. Disease produces structural dysbiosis (27% denser) without compositional or functional change
+5. These results support the network layer of the insurance hypothesis
+
+---
+
+## 5.6 References
+
+[Superset of Paper 2 network references + additional thesis-specific citations]
