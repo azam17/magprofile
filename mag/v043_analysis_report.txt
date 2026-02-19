@@ -617,5 +617,358 @@ Myxococcota:
 
 
 ================================================================================
+SECTION 10: ECOLOGICAL ANALYSIS RESULTS
+================================================================================
+
+10.1 Alpha Diversity
+---------------------
+  30 samples, 1,018 MAGs (all retained after 10% prevalence filter)
+
+  Shannon (mean +/- SD):   5.994 +/- 0.227
+  Simpson (mean +/- SD):   0.994 +/- 0.002
+  Richness (mean +/- SD):  1,018.0 +/- 0.2
+  Evenness range:          0.787 -- 0.921
+
+  All samples retain virtually all 1,018 MAGs. High evenness (>0.78)
+  indicates no single MAG dominates any sample.
+
+
+10.2 Beta Diversity -- PERMANOVA
+----------------------------------
+  By compartment:
+    F = 9.955, p = 0.001, R-squared = 0.424 (42.4% of variance)
+
+  By group (disease x compartment):
+    F = 4.757, p = 0.001, R-squared = 0.498 (49.8% of variance)
+
+  By health status:
+    F = 1.546, p = 0.120, R-squared = 0.052 (5.2% -- NOT significant)
+
+  Interpretation: Compartment explains 42% of compositional variance.
+  Health status alone explains only 5% and is NOT significant (p=0.12).
+  When disease x compartment groups are tested together, R-squared rises
+  to 50%, but this is driven by the compartment component.
+
+
+10.3 ANOSIM
+-------------
+  By compartment:     R = 0.685, p = 0.001 ***
+  By group:           R = 0.566, p = 0.001 ***
+  By health status:   R = 0.055, p = 0.089 (NS)
+
+  The ANOSIM R statistic for compartment (0.685) indicates strong
+  between-group dissimilarity. Health status R (0.055) is near zero,
+  confirming disease does not separate communities.
+
+
+10.4 PERMDISP (Homogeneity of Dispersions)
+--------------------------------------------
+  By compartment:     F = 2.323, p = 0.122 (NS) -- dispersions equal
+  By group:           F = 0.566, p = 0.715 (NS) -- dispersions equal
+  By health status:   F = 1.528, p = 0.226 (NS) -- dispersions equal
+
+  All PERMDISP tests are non-significant, confirming that PERMANOVA
+  differences reflect true compositional shifts, not variance artifacts.
+
+  Within-group distances (compartment):
+    Bulk:         0.1516
+    Endosphere:   0.1038
+    Rhizosphere:  0.1000
+
+  Endosphere and rhizosphere are more internally homogeneous than bulk
+  soil, consistent with stronger host filtering in root compartments.
+
+
+10.5 Pairwise PERMANOVA
+-------------------------
+  By compartment (all significant after FDR):
+
+    Comparison                    F       p      q      R-squared
+    Bulk vs Endosphere          15.43   0.001  0.002   0.462
+    Endosphere vs Rhizosphere    8.89   0.001  0.002   0.331
+    Bulk vs Rhizosphere          4.33   0.002  0.002   0.194
+
+  By group (same compartment, disease vs healthy -- NOT significant):
+
+    Diseased_bulk vs Healthy_bulk            F=1.24  p=0.262  q=0.294  R2=0.134
+    Diseased_endo vs Healthy_endo            F=1.17  p=0.274  q=0.294  R2=0.128
+    Diseased_rhizo vs Healthy_rhizo          F=1.07  p=0.340  q=0.340  R2=0.118
+
+  By group (cross-compartment -- significant):
+
+    Diseased_bulk vs Diseased_endo           F=8.77  p=0.013  q=0.022  R2=0.523
+    Diseased_bulk vs Healthy_endo            F=8.86  p=0.013  q=0.022  R2=0.525
+    Healthy_bulk vs Healthy_endo             F=7.87  p=0.013  q=0.022  R2=0.496
+
+  Interpretation: Within the same compartment, diseased and healthy
+  communities are statistically indistinguishable (all p>0.26). Across
+  compartments, communities differ strongly (R-squared 0.19-0.52).
+
+
+10.6 Differential Abundance (MAG-level)
+-----------------------------------------
+  By compartment:
+    Bulk vs Endosphere:           634 significant MAGs (q<0.05)
+    Endosphere vs Rhizosphere:    474 significant MAGs
+    Bulk vs Rhizosphere:          376 significant MAGs
+
+  By group (same compartment, disease vs healthy):
+    Diseased_bulk vs Healthy_bulk:           0 significant MAGs
+    Diseased_endo vs Healthy_endo:           0 significant MAGs
+    Diseased_rhizo vs Healthy_rhizo:         0 significant MAGs
+
+  By health status:
+    Diseased vs Healthy:                     0 significant MAGs (q<0.05)
+
+  By group (cross-compartment):
+    Diseased_bulk vs Healthy_endo:         198 significant MAGs
+    Diseased_bulk vs Diseased_endo:        191 significant MAGs
+    Healthy_bulk vs Healthy_endo:          164 significant MAGs
+
+
+10.7 Indicator Species (IndVal)
+---------------------------------
+  By compartment:
+    Bulk:         199 significant indicators
+    Endosphere:   239 significant indicators
+    Rhizosphere:   73 significant indicators
+
+  By group:
+    Diseased_bulk:        67 significant indicators
+    Diseased_endo:        78 significant indicators
+    Diseased_rhizo:       22 significant indicators
+    Healthy_bulk:         67 significant indicators
+    Healthy_endo:         75 significant indicators
+    Healthy_rhizo:         9 significant indicators
+
+  By health status:
+    Diseased:            125 significant indicators
+    Healthy:              36 significant indicators
+
+  Endosphere has the most indicator species (239), consistent with
+  stronger host-mediated selection creating a distinct assemblage.
+  The diseased state has 3.5x more indicators than healthy (125 vs 36),
+  suggesting disease recruits or enriches specific taxa even though
+  overall composition doesn't shift significantly.
+
+
+10.8 Core Microbiome
+----------------------
+  Prevalence    Core MAGs (all groupings)
+  ----------    -------------------------
+  50%           1,018
+  75%           1,018
+  90%           1,017 -- 1,018
+  100%          1,017
+
+  Nearly all 1,018 MAGs are present in >90% of samples across all
+  compartments and health states. Only 1 MAG drops out at 100%.
+  This indicates a highly cohesive core community -- the differences
+  between compartments are in ABUNDANCE, not presence/absence.
+
+
+10.9 Compartment Specificity
+------------------------------
+  By compartment:
+    Specialists (score > 0.5):  65 (6.4%)
+    Generalists (score <= 0.5): 953 (93.6%)
+
+  By group:
+    Specialists (score > 0.5):  21 (2.1%)
+    Generalists (score <= 0.5): 997 (97.9%)
+
+  The vast majority of MAGs are generalists present across all
+  compartments. Only 6.4% are true compartment specialists. This means
+  the 634 differentially abundant MAGs (bulk vs endo) are not absent
+  from one compartment -- they are present everywhere but at different
+  abundances.
+
+
+================================================================================
+SECTION 11: THREE-PILLAR INTEGRATION (ECOLOGY + FUNCTION + NETWORK)
+================================================================================
+
+11.1 Compartment Is the Master Variable
+-----------------------------------------
+  All three pillars converge on compartment as the dominant driver:
+
+  ECOLOGY:    PERMANOVA R2=0.424, 634 differential MAGs (bulk vs endo)
+  FUNCTION:   2,000+ differential pathways, nifHDK/acdS enriched in endo
+  NETWORK:    Density gradient (bulk 0.273 > endo 0.231 > rhizo 0.227)
+
+  Health status is consistently non-significant:
+
+  ECOLOGY:    PERMANOVA p=0.120, 0 differential MAGs
+  FUNCTION:   0 differential pathways, 0 differential CAZymes
+  NETWORK:    But 27% denser in diseased (structural change only)
+
+
+11.2 Disease Changes Structure, Not Composition or Function
+--------------------------------------------------------------
+  This is the central finding across all three pillars:
+
+  Level              Diseased vs Healthy    Evidence
+  -----              -------------------    --------
+  Composition        No difference          PERMANOVA p=0.12, 0 diff MAGs
+  Function           No difference          0 pathways, 0 CAZymes (q<0.05)
+  Redundancy         No difference          KW p=0.847
+  Network structure  YES different          27% more edges (0.117 vs 0.092)
+  Indicator species  YES different          125 vs 36 indicators
+
+  Disease does not eliminate taxa (core is 1,017-1,018 at all thresholds).
+  Disease does not change what functions are present.
+  Disease DOES reorganize interaction patterns (denser co-occurrence network).
+  Disease DOES shift which taxa become indicators (125 disease-associated
+  indicator MAGs vs 36 health-associated).
+
+
+11.3 The Abundance-Function-Network Triangle
+----------------------------------------------
+  For each compartment comparison, all three pillars align:
+
+  Bulk vs Endosphere (strongest separation):
+    ECOLOGY:  R2=0.462, 634 diff MAGs (strongest pairwise)
+    FUNCTION: Most DE pathways, nifHDK/acdS enriched in endo
+    NETWORK:  Bulk has densest network (0.273), endo has more modules
+
+  Endosphere vs Rhizosphere (moderate separation):
+    ECOLOGY:  R2=0.331, 474 diff MAGs
+    FUNCTION: 500+ DE pathways, redundancy equal (2.99 vs 2.99)
+    NETWORK:  Similar density (0.231 vs 0.227)
+
+  Bulk vs Rhizosphere (weakest separation):
+    ECOLOGY:  R2=0.194, 376 diff MAGs (weakest pairwise)
+    FUNCTION: 1,500+ DE pathways, gcd enriched in bulk
+    NETWORK:  Largest density gap (0.273 vs 0.227)
+
+
+11.4 Generalists With Differential Abundance, Not Specialists
+---------------------------------------------------------------
+  A key integration insight:
+
+  ECOLOGY shows 93.6% of MAGs are generalists (specificity < 0.5).
+  ECOLOGY also shows 634 MAGs are differentially abundant (bulk vs endo).
+  Core microbiome is 1,017-1,018 at 100% prevalence.
+
+  This means: the same MAGs are PRESENT in all compartments but at
+  very different ABUNDANCES. The plant root doesn't exclude bulk soil
+  taxa -- it amplifies some and suppresses others.
+
+  FUNCTION confirms this: PGPR carriers (nifHDK, acdS) are present
+  in all compartments but assigned to endosphere by highest mean
+  abundance. The genes exist everywhere; the organisms carrying them
+  are selectively enriched in roots.
+
+  NETWORK shows these abundance shifts create different interaction
+  patterns: the same 1,018 MAGs form different co-occurrence networks
+  depending on compartment.
+
+
+11.5 Keystone Taxa Are Generalist Indicators
+----------------------------------------------
+  Cross-referencing the three pillars for Terracidiphilus (top keystone):
+
+  NETWORK:  Keystone score 0.981, highest betweenness, Module 0 (341 MAGs)
+  ECOLOGY:  Present in all samples (generalist, core at 100%)
+  ECOLOGY:  Likely a compartment indicator (Acidobacteriota dominant in
+            bulk-associated Module 0)
+  FUNCTION: Acidobacteriota carry carbon-degradation genes (cellulose,
+            chitin) that feed the community
+
+  Similarly for Myxococcota (26 MAGs, 3 bridges):
+
+  NETWORK:  Bridge nodes connecting modules (P=0.62-0.64)
+  ECOLOGY:  Generalists present across compartments
+  ECOLOGY:  More interactions in diseased networks (disease indicators)
+  FUNCTION: Predatory lifestyle drives nutrient cycling (C, N, P)
+
+
+11.6 Indicator Species Asymmetry Under Disease
+-------------------------------------------------
+  ECOLOGY shows 125 disease indicators vs 36 healthy indicators (3.5x).
+  ECOLOGY shows 0 differential MAGs (q<0.05) between D and H.
+  NETWORK shows 27% more edges in diseased networks.
+
+  How can there be disease indicators without differential abundance?
+
+  IndVal measures specificity x fidelity -- a MAG can be a disease
+  "indicator" not because it's significantly more abundant, but because
+  it's more CONSISTENTLY abundant across diseased samples (higher
+  fidelity). The MAGs are not enriched to the point of statistical
+  significance after FDR, but they show tighter association with
+  diseased samples.
+
+  This connects to the network finding: disease doesn't change WHO
+  is there (composition) or WHAT they can do (function), but it
+  changes HOW CONSISTENTLY they co-occur (network density + indicators).
+
+
+11.7 The Insurance Hypothesis -- Full Evidence
+-------------------------------------------------
+  Integrating all three pillars for functional insurance:
+
+  ECOLOGY:
+    - High alpha diversity (Shannon 5.99)
+    - Core of 1,018 MAGs maintained regardless of disease
+    - 93.6% generalists -- broad presence buffers against loss
+
+  FUNCTION:
+    - Functional redundancy: bulk 2.71, root 2.99 (KW p<0.001)
+    - Disease does not reduce redundancy (KW p=0.847)
+    - Each function carried by multiple MAGs
+
+  NETWORK:
+    - 258 distinct modules -- community is compartmentalized
+    - Keystone taxa (Terracidiphilus) bridge modules
+    - Even under disease (denser network), modular structure persists
+
+  Together: The soil microbiome maintains a resilient functional toolkit
+  through (1) high taxonomic diversity with even abundances, (2) broad
+  generalist distributions ensuring presence everywhere, (3) functional
+  redundancy where multiple MAGs carry each function, and (4) modular
+  network structure that compartmentalizes interactions. Disease perturbs
+  the interaction layer but cannot break through these three layers of
+  insurance.
+
+
+================================================================================
+SECTION 12: QUANTITATIVE SUMMARY TABLE
+================================================================================
+
+  Metric                          Compartment   Group(DxC)   Health
+  -----                           -----------   ----------   ------
+  PERMANOVA R-squared             0.424 ***     0.498 ***    0.052 NS
+  ANOSIM R                        0.685 ***     0.566 ***    0.055 NS
+  PERMDISP p-value                0.122 NS      0.715 NS     0.226 NS
+  Differential MAGs (q<0.05)      634/474/376   0/0/0 (DvH)  0
+  Indicator species (significant) 199/239/73    67-78 per     125/36
+  Core MAGs (90% prevalence)      1,018         1,017        1,018
+  Specialists (score>0.5)         65 (6.4%)     21 (2.1%)    21 (2.1%)
+  Shannon diversity               5.99+/-0.23   5.99+/-0.23  5.99+/-0.23
+  Functional redundancy (Shannon) 2.71/2.99***  2.63-2.97*** 2.99/2.99 NS
+  DE pathways (q<0.05)            2000+         0 (DvH)      0
+  DE CAZymes (q<0.05)             200+          0 (DvH)      0
+  Significant PGPR traits         7             1 (gcd)      0
+  Network edges (global)          25,883        25,883       25,883
+  Network density (D vs H)        --            --           0.117/0.092
+  Null model z-score              81.36 ***     81.36 ***    81.36 ***
+  Network modules                 258           258          258
+  Keystone taxa identified        ~50+          ~50+         ~50+
+
+
+================================================================================
+SECTION 13: ADDITIONAL REFERENCES (ECOLOGICAL ANALYSIS)
+================================================================================
+
+  Anderson (2001) Austral Ecology 26:32-46 -- PERMANOVA method
+  Anderson (2006) Biometrics 62:245-253 -- PERMDISP method
+  Clarke (1993) Austral Ecology 18:117-143 -- ANOSIM method
+  Dufrene & Legendre (1997) Ecol Monographs 67:345-366 -- IndVal indicator species
+  Legendre & Anderson (1999) Ecol Monographs 69:1-24 -- distance-based RDA
+  Bray & Curtis (1957) Ecol Monographs 27:325-349 -- Bray-Curtis dissimilarity
+  Jaccard (1912) New Phytologist 11:37-50 -- Jaccard index
+
+
+================================================================================
 END OF REPORT
 ================================================================================
