@@ -97,31 +97,7 @@ d_s = CN_s / (prod_s CN_s)^{1/S}
 
 where CN_s is the mitochondrial copy number for species s. This correction is critical: without it, species with higher mitochondrial copy numbers generate proportionally more reads, leading to systematic overestimation of their weight fractions.
 
-**E-step.** For each classified read r with candidate species set C(r), we compute posterior responsibilities:
-
-gamma_{r,j} = P(z_r = s_j | r, theta) = f(r | s_j, theta) / sum_{j'} f(r | s_{j'}, theta)
-
-where f(r | s, theta) = w_s * d_s * b_{s,m(r)} * exp(-lambda * L_{s,m(r)}) * c_{r,s} and c_{r,s} is the fine containment score for read r against species s. The computation is performed in log-space with logsumexp normalization for numerical stability.
-
-**M-step.** Parameters are updated as follows:
-
-*Weight fractions* (with Dirichlet MAP):
-w_s = (N_s^{eff} / adj_s + alpha - 1) / sum_s (N_s^{eff} / adj_s + alpha - 1)
-
-where N_s^{eff} = sum_r gamma_{r,s} is the effective count for species s and adj_s = d_s in single-marker mode (1.0 otherwise).
-
-*DNA yield factors* (with log-normal MAP):
-log(d_s) = (N_s^{eff} * log(r_s) + mu_d / sigma_d^2) / (N_s^{eff} + 1/sigma_d^2)
-
-where r_s is the ratio of observed to expected reads for species s, followed by geometric mean normalization.
-
-*PCR bias* (with log-normal MAP): analogous to the DNA yield update, applied per species-marker combination with per-species geometric mean normalization.
-
-*Degradation rate*: The M-step for λ does not admit a closed-form update because the normalisation constant Z_r(λ) = Σ_j w_{s_j} d_{s_j} b_{s_j,m(r)} exp(−λ L_{s_j,m(r)}) c_{r,s_j} depends non-linearly on λ. Instead, λ is updated at each EM iteration by bounded scalar optimisation of the expected complete-data log-likelihood:
-
-λ^{(t+1)} = argmax_{λ ∈ [10^{-6}, 0.1]} Q(λ)
-
-where Q(λ) = Σ_r Σ_j γ_{r,j} [−λ L_{s_j,m(r)} − log Z_r(λ)]. This one-dimensional optimisation is solved using Brent's method with the interval [10^{-6}, 0.1], which encompasses all physically meaningful degradation rates for processed food products. In practice, this bounded search adds negligible computational overhead (<2% of total runtime) relative to the E-step.
+The EM algorithm alternates between an E-step that computes posterior read-to-species responsibilities via Bayes' rule and an M-step that re-estimates all parameters as MAP solutions under their respective priors. DNA yield and PCR bias updates admit closed-form MAP solutions; the degradation rate, which lacks a closed-form update due to the non-linear normalisation constant, is solved at each iteration by bounded scalar optimisation using Brent's method. All update equations are provided in Supplementary Methods S1.
 
 **Convergence and model selection.** The EM algorithm is run for a maximum of 200 iterations or until the relative change in log-likelihood falls below 10^{-6}. To mitigate sensitivity to initialization, we perform 3 independent restarts: one from uniform initialization and two from random Dirichlet draws. The restart with the highest final log-likelihood is selected. Model complexity is assessed via BIC:
 
@@ -131,27 +107,13 @@ where k = (S - 1) + S + S*M + I(lambda) counts the free parameters (weight fract
 
 ### 2.4. Statistical inference
 
-**Confidence intervals.** For each species weight fraction w_s, we compute 95% confidence intervals using a normal approximation to the posterior:
+**Confidence intervals.** For each species weight fraction w_s, we report 95% confidence intervals using a normal approximation to the posterior, with effective sample sizes derived from the final E-step to account for read classification uncertainty.
 
-w_s +/- 1.96 * sqrt(w_s * (1 - w_s) / (N_s^{eff} + 1))
-
-where N_s^{eff} is the effective sample size from the final E-step, accounting for classification uncertainty.
-
-**Likelihood ratio test (LRT) for species presence.** For each species s, we test H_0: w_s = 0 versus H_1: w_s > 0 by computing:
-
-LRT_s = 2 * (log L_{full} - log L_{null,s})
-
-where L_{null,s} is the likelihood with species s removed and weights re-normalized. Under H_0, LRT_s follows a chi-squared distribution with 1 degree of freedom (asymptotically). Species are declared present if p < 0.05 and w_s exceeds the reporting threshold (default: 0.1%).
+**Likelihood ratio test (LRT) for species presence.** For each species s, we test H_0: w_s = 0 against H_1: w_s > 0 by comparing the full-model log-likelihood against the log-likelihood of a reduced model with species s removed and weights re-normalised. Under H_0, the test statistic follows a chi-squared distribution with 1 degree of freedom. Species are declared present if p < 0.05 and w_s exceeds the reporting threshold (default: 0.1%).
 
 ### 2.5. Calibration from spike-in standards
 
-When calibration data from spike-in experiments with known species compositions are available, SpeciesID estimates informative priors for the bias parameters. Given K calibration samples with known weight fractions w^{(k)} and observed read counts n^{(k)}_{s,m}, the DNA yield and PCR bias are estimated as:
-
-d_s^{(k)} = geometric mean_m (n^{(k)}_{s,m} / (total_m^{(k)} * w_s^{(k)}))
-
-b_{s,m}^{(k)} = (n^{(k)}_{s,m} / (total_m^{(k)} * w_s^{(k)})) / d_s^{(k)}
-
-The prior hyperparameters (mu_d, sigma_d, mu_b, sigma_b) are then set to the mean and standard deviation of log(d) and log(b) across calibration samples. The calibration command (`speciesid calibrate`) saves these parameters to a file that can be loaded during analysis via the `--calibration` flag.
+When spike-in calibration data are available, SpeciesID estimates informative prior hyperparameters directly from samples with known species compositions, rather than relying on the default uninformative priors. DNA yield and PCR bias are estimated per calibration sample from observed read counts and known weight fractions; the mean and standard deviation of the log-scale estimates are then used as prior hyperparameters (mu_d, sigma_d, mu_b, sigma_b) for subsequent analyses. The calibration command (`speciesid calibrate`) saves these parameters to a file loaded via the `--calibration` flag. Full calibration formulas are provided in Supplementary Methods S1.
 
 ### 2.6. Software implementation
 
@@ -436,9 +398,45 @@ Zhang, X., Wang, T., Ji, J., Wang, H., Zhu, X., Du, P., Zhu, Y., Huang, Y., Chen
 
 ## Supplementary Material
 
-### S1. EM convergence properties
+### S1. EM algorithm: update equations and convergence
 
-The EM algorithm with MAP estimation under log-normal priors is guaranteed to increase the penalised log-likelihood at each iteration (Dempster et al., 1977). In practice, convergence is observed within 20--50 iterations for typical food authentication datasets. The multiple-restart strategy (3 restarts from different initialisations) mitigates the risk of convergence to local optima; in benchmarks, the uniform initialisation consistently achieved the highest log-likelihood, and inter-seed reproducibility was 0.41 pp (mean) across all simulated experiments, confirming that the landscape is unimodal in practice for the datasets tested here.
+**E-step.** For each classified read r with candidate species set C(r), posterior responsibilities are computed via Bayes' rule:
+
+gamma_{r,j} = f(r | s_j, theta) / sum_{j'} f(r | s_{j'}, theta)
+
+where f(r | s, theta) = w_s * d_s * b_{s,m(r)} * exp(-lambda * L_{s,m(r)}) * c_{r,s} and c_{r,s} is the fine containment score for read r against species s. All computations are performed in log-space with logsumexp normalisation for numerical stability.
+
+**M-step.** Parameters are re-estimated as MAP solutions under their respective priors:
+
+*Weight fractions* (Dirichlet MAP):
+
+w_s = (N_s^{eff} / adj_s + alpha - 1) / sum_s (N_s^{eff} / adj_s + alpha - 1)
+
+where N_s^{eff} = sum_r gamma_{r,s} is the effective read count for species s, and adj_s = d_s in single-marker mode (1.0 otherwise).
+
+*DNA yield factors* (log-normal MAP):
+
+log(d_s) = (N_s^{eff} * log(r_s) + mu_d / sigma_d^2) / (N_s^{eff} + 1/sigma_d^2)
+
+where r_s is the ratio of observed to expected reads for species s. Yield factors are then rescaled so their geometric mean equals 1.
+
+*PCR bias* (log-normal MAP): analogous to the yield update, applied per species-marker combination, with per-species geometric mean normalisation to enforce identifiability.
+
+*Degradation rate*: The update for lambda lacks a closed-form solution because the normalisation constant Z_r(lambda) = sum_j w_{s_j} d_{s_j} b_{s_j,m(r)} exp(-lambda * L_{s_j,m(r)}) c_{r,s_j} depends non-linearly on lambda. It is therefore updated at each iteration by bounded scalar optimisation of the expected complete-data log-likelihood:
+
+lambda^{t+1} = argmax_{lambda in [1e-6, 0.1]} Q(lambda)
+
+where Q(lambda) = sum_r sum_j gamma_{r,j} [-lambda * L_{s_j,m(r)} - log Z_r(lambda)]. This one-dimensional search is solved using Brent's method and adds less than 2% to total runtime.
+
+**Calibration formulas.** Given K spike-in calibration samples with known weight fractions w^{(k)} and observed marker read counts n^{(k)}_{s,m}, DNA yield and PCR bias are estimated as:
+
+d_s^{(k)} = geometric mean_m (n^{(k)}_{s,m} / (total_m^{(k)} * w_s^{(k)}))
+
+b_{s,m}^{(k)} = (n^{(k)}_{s,m} / (total_m^{(k)} * w_s^{(k)})) / d_s^{(k)}
+
+The prior hyperparameters mu_d, sigma_d, mu_b, sigma_b are set to the mean and standard deviation of log(d) and log(b) across calibration samples.
+
+**Convergence properties.** The EM algorithm with MAP estimation under log-normal priors is guaranteed to increase the penalised log-likelihood at each iteration (Dempster et al., 1977). In practice, convergence is observed within 20--50 iterations for typical food authentication datasets. The multiple-restart strategy (3 restarts from different initialisations) mitigates sensitivity to initialisation; in benchmarks, the uniform initialisation consistently achieved the highest log-likelihood, and inter-seed reproducibility was 0.41 pp (mean) across all simulated experiments.
 
 ### S2. Reference database marker details
 
